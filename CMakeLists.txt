@@ -17,6 +17,10 @@ SET(CMAKE_CXX_FLAGS ${STRICT_FLAGS})
 # collect sources
 file(GLOB_RECURSE src "src/*.cpp")
 add_library(${PROJECT_NAME} ${src})
+set_target_properties(${PROJECT_NAME}
+                       PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+set_target_properties(${PROJECT_NAME}
+                       PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # find vulkan
 find_package(Vulkan REQUIRED)
@@ -25,6 +29,7 @@ target_link_libraries(
 	${PROJECT_NAME}
 	PUBLIC rtrpf
 	PUBLIC cuda
+	PUBLIC cudart
 )
 
 if (WIN32)
