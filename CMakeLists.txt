@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 
 project("foray-denoiser-optix")
 
+enable_language(CXX)
+enable_language(CUDA)
+set(CMAKE_CUDA_STANDARD 20)
+
 include("cmakescripts/findoptixsdk.cmake")
 
 MESSAGE("--- << CMAKE of ${PROJECT_NAME} >> --- ")
@@ -20,6 +24,7 @@ find_package(Vulkan REQUIRED)
 target_link_libraries(
 	${PROJECT_NAME}
 	PUBLIC rtrpf
+	PUBLIC cuda
 )
 
 if (WIN32)
