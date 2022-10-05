@@ -1,6 +1,3 @@
+#pragma once
 
-
-namespace foray::optix
-{
-    class OptiXDenoiserStage;
-} // namespace foray::optix
+#include "foray_optix_stage.hpp"
