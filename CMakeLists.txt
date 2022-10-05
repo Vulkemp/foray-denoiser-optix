@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.18)
 
 project("foray-denoiser-optix")
 
+include("cmakescripts/findoptixsdk.cmake")
+
 MESSAGE("--- << CMAKE of ${PROJECT_NAME} >> --- ")
 MESSAGE(STATUS "CURRENT SOURCE DIR \"${CMAKE_CURRENT_SOURCE_DIR}\"")#
 
@@ -31,5 +33,6 @@ target_include_directories(
 	${PROJECT_NAME}
 	PUBLIC "../hsk_rt_rpf/src"
 	PUBLIC "../hsk_rt_rpf/third_party"
+	PUBLIC $CACHE{OPTIXSDK_INCLUDE}
 	PUBLIC ${Vulkan_INCLUDE_DIRS}
 )
