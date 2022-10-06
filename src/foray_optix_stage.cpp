@@ -207,7 +207,7 @@ namespace foray::optix {
                                  VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &imgMemBarrier);
         }
     }
-    void OptiXDenoiserStage::DispatchDenoise(VkSemaphore readyToDenoise, VkSemaphore denoiseCompleted)
+    void OptiXDenoiserStage::DispatchDenoise(uint64_t& timelineValue)
     {
         try
         {
@@ -243,8 +243,8 @@ namespace foray::optix {
             // Wait from Vulkan (Copy to Buffer)
             cudaExternalSemaphoreWaitParams waitParams{};
             waitParams.flags              = 0;
-            waitParams.params.fence.value = fenceValue;
-            cudaWaitExternalSemaphoresAsync(&m_semaphore.cu, &waitParams, 1, nullptr);
+            waitParams.params.fence.value = timelineValue;
+            cudaWaitExternalSemaphoresAsync(&mCudaSemaphore, &waitParams, 1, nullptr);
 
             if(!!mCudaIntensity)
             {
@@ -267,8 +267,8 @@ namespace foray::optix {
 
             cudaExternalSemaphoreSignalParams sigParams{};
             sigParams.flags              = 0;
-            sigParams.params.fence.value = ++fenceValue;
-            cudaSignalExternalSemaphoresAsync(&m_semaphore.cu, &sigParams, 1, mCudaStream);
+            sigParams.params.fence.value = ++timelineValue;
+            cudaSignalExternalSemaphoresAsync(&mCudaSemaphore, &sigParams, 1, mCudaStream);
         }
         catch(const std::exception& e)
         {
@@ -276,8 +276,36 @@ namespace foray::optix {
         }
     }
 
-    void OptiXDenoiserStage::CreateFixedSizeComponents() {}
-    void OptiXDenoiserStage::DestroyFixedComponents() {}
+    void OptiXDenoiserStage::CreateFixedSizeComponents()
+    {
+#ifdef WIN32
+        // auto handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+#else
+        auto                    handleType = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
+
+
+        cudaExternalSemaphoreHandleDesc externalSemaphoreHandleDesc;
+        std::memset(&externalSemaphoreHandleDesc, 0, sizeof(externalSemaphoreHandleDesc));
+        externalSemaphoreHandleDesc.flags = 0;
+#ifdef WIN32
+        externalSemaphoreHandleDesc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
+        externalSemaphoreHandleDesc.handle.win32.handle = (void*)m_semaphore.handle;
+#else
+        externalSemaphoreHandleDesc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+        externalSemaphoreHandleDesc.handle.fd = mSemaphore->GetHandle();
+#endif
+
+        AssertCudaResult(cudaImportExternalSemaphore(&mCudaSemaphore, &externalSemaphoreHandleDesc));
+    }
+    void OptiXDenoiserStage::DestroyFixedComponents()
+    {
+        if(!!mCudaSemaphore)
+        {
+            cudaDestroyExternalSemaphore(mCudaSemaphore);
+            mCudaSemaphore = nullptr;
+        }
+    }
     void OptiXDenoiserStage::CreateResolutionDependentComponents()
     {
         VkExtent3D extent = {mContext->Swapchain.extent.width, mContext->Swapchain.extent.height, 1};

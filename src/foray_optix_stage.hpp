@@ -1,5 +1,6 @@
 #pragma once
 #include <cuda.h>
+#include <driver_types.h>
 #include <memory/hsk_managedbuffer.hpp>
 #include <optix_types.h>
 #include <stages/hsk_denoiserstage.hpp>
@@ -8,11 +9,11 @@ namespace foray::optix {
     class OptiXDenoiserStage : public hsk::DenoiserStage
     {
       public:
-        virtual void Init(const VkContext* context, const hsk::DenoiserConfig& config) override;
+        virtual void Init(const hsk::VkContext* context, const hsk::DenoiserConfig& config) override;
 
-        virtual void BeforeDenoise(const FrameRenderInfo& renderInfo) override;
-        virtual void AfterDenoise(const FrameRenderInfo& renderInfo) override;
-        virtual void DispatchDenoise(VkSemaphore readyToDenoise, VkSemaphore denoiseCompleted) override;
+        virtual void BeforeDenoise(const hsk::FrameRenderInfo& renderInfo) override;
+        virtual void AfterDenoise(const hsk::FrameRenderInfo& renderInfo) override;
+        virtual void DispatchDenoise(uint64_t& timelineValue) override;
 
       protected:
         virtual void CreateFixedSizeComponents() override;
@@ -42,7 +43,7 @@ namespace foray::optix {
         {
             hsk::ManagedBuffer Buffer;
 #ifdef WIN32
-            HANDLE Handle = {};
+            HANDLE Handle = {INVALID_HANDLE_VALUE};
 #else
             int Handle = -1;
 #endif
@@ -57,5 +58,8 @@ namespace foray::optix {
 
         OptixPixelFormat mPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
         size_t           mSizeOfPixel = 4 * sizeof(uint16_t);
+
+        hsk::DenoiserSynchronisationSemaphore* mSemaphore;
+        cudaExternalSemaphore_t                mCudaSemaphore;
     };
 }  // namespace foray::optix
