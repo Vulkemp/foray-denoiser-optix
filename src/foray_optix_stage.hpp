@@ -1,36 +1,41 @@
 #pragma once
-#include <stages/hsk_denoiserstage.hpp>
-#include <optix_types.h>
 #include <cuda.h>
 #include <memory/hsk_managedbuffer.hpp>
+#include <optix_types.h>
+#include <stages/hsk_denoiserstage.hpp>
 
-namespace foray::optix
-{
+namespace foray::optix {
     class OptiXDenoiserStage : public hsk::DenoiserStage
     {
-    public:
-        void Init(hsk::ManagedImage *noisy, hsk::ManagedImage *baseColor, hsk::ManagedImage *normal, bool useTemporal = true);
+      public:
+        virtual void Init(const VkContext* context, const hsk::DenoiserConfig& config) override;
 
-        virtual void RecordFrame(hsk::FrameRenderInfo &renderInfo) override;
+        virtual void BeforeDenoise(const FrameRenderInfo& renderInfo) override;
+        virtual void AfterDenoise(const FrameRenderInfo& renderInfo) override;
+        virtual void DispatchDenoise(VkSemaphore readyToDenoise, VkSemaphore denoiseCompleted) override;
 
-    protected:
+      protected:
         virtual void CreateFixedSizeComponents() override;
         virtual void DestroyFixedComponents() override;
         virtual void CreateResolutionDependentComponents() override;
         virtual void DestroyResolutionDependentComponents() override;
 
-        hsk::ManagedImage mTemporal;
+        hsk::ManagedImage* mPrimaryInput  = nullptr;
+        hsk::ManagedImage* mAlbedoInput   = nullptr;
+        hsk::ManagedImage* mNormalInput   = nullptr;
+        hsk::ManagedImage* mPrimaryOutput = nullptr;
+
         OptixDenoiserOptions mDenoiserOptions{};
 
-        CUcontext mCudaContext{};
-        CUstream mCudaStream{};
+        CUcontext   mCudaContext{};
+        CUstream    mCudaStream{};
         CUdeviceptr mCudaStateBuffer{};
         CUdeviceptr mCudaScratchBuffer{};
         CUdeviceptr mCudaIntensity{};
         CUdeviceptr mCudaMinRGB{};
 
         OptixDeviceContext mOptixDevice{};
-        OptixDenoiser mOptixDenoiser{};
+        OptixDenoiser      mOptixDenoiser{};
         OptixDenoiserSizes mDenoiserSizes{};
 
         struct CudaBuffer
@@ -41,15 +46,16 @@ namespace foray::optix
 #else
             int Handle = -1;
 #endif
-            void *CudaPtr = nullptr;
+            void* CudaPtr = nullptr;
 
-            void Setup(const hsk::VkContext *context);
+            void Setup(const hsk::VkContext* context);
             void Destroy();
         };
 
         std::array<CudaBuffer, 3> mInputBuffers;
-        CudaBuffer mOutputBuffer;
+        CudaBuffer                mOutputBuffer;
 
-        size_t mSizeOfPixel = 4 * sizeof(uint16_t);
+        OptixPixelFormat mPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
+        size_t           mSizeOfPixel = 4 * sizeof(uint16_t);
     };
-} // namespace foray::optix
+}  // namespace foray::optix
