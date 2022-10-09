@@ -4,8 +4,7 @@
 #include <optix.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
-
-using namespace hsk;
+#include <core/foray_logger.hpp>
 
 namespace foray::optix {
     void OptixDebugCallback(unsigned int level, const char* tag, const char* message, void* cbdata)
@@ -28,11 +27,12 @@ namespace foray::optix {
                 break;
         }
 
-        hsk::logger()->log(loglevel, "[OptiX::{}] {}", tag, message);
+        core::logger()->log(loglevel, "[OptiX::{}] {}", tag, message);
     }
 
-    void OptiXDenoiserStage::Init(const VkContext* context, const DenoiserConfig& config)
+    void OptiXDenoiserStage::Init(const core::VkContext* context, const stages::DenoiserConfig& config)
     {
+        
         Destroy();
         mContext       = context;
         mPrimaryInput  = config.PrimaryInput;
@@ -57,7 +57,7 @@ namespace foray::optix {
         AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
     }
 
-    void OptiXDenoiserStage::BeforeDenoise(const FrameRenderInfo& renderInfo)
+    void OptiXDenoiserStage::BeforeDenoise(const base::FrameRenderInfo& renderInfo)
     {
         VkCommandBuffer cmdBuf = renderInfo.GetCommandBuffer();
 
@@ -144,7 +144,7 @@ namespace foray::optix {
                                  VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
         }
     }
-    void OptiXDenoiserStage::AfterDenoise(const FrameRenderInfo& renderInfo)
+    void OptiXDenoiserStage::AfterDenoise(const base::FrameRenderInfo& renderInfo)
     {
         VkCommandBuffer cmdBuf = renderInfo.GetCommandBuffer();
 
@@ -272,7 +272,7 @@ namespace foray::optix {
         }
         catch(const std::exception& e)
         {
-            std::cout << e.what() << std::endl;
+            core::logger();
         }
     }
 
@@ -316,7 +316,7 @@ namespace foray::optix {
         VkBufferUsageFlags usage{VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
                                  | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
 
-        hsk::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
+        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
                                                           VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, "OptiX Denoise Noisy Input");
 
         mInputBuffers[0].Buffer.Create(mContext, bufCi);
@@ -367,7 +367,7 @@ namespace foray::optix {
         }
     }
 
-    void OptiXDenoiserStage::CudaBuffer::Setup(const VkContext* context)
+    void OptiXDenoiserStage::CudaBuffer::Setup(const core::VkContext* context)
     {
         VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
                                      .memory     = Buffer.GetAllocationInfo().deviceMemory,

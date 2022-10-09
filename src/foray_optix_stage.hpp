@@ -1,18 +1,19 @@
 #pragma once
+#include <array>
+#include <core/foray_managedbuffer.hpp>
 #include <cuda.h>
 #include <driver_types.h>
-#include <memory/hsk_managedbuffer.hpp>
 #include <optix_types.h>
-#include <stages/hsk_denoiserstage.hpp>
+#include <stages/foray_denoiserstage.hpp>
 
 namespace foray::optix {
-    class OptiXDenoiserStage : public hsk::DenoiserStage
+    class OptiXDenoiserStage : public stages::DenoiserStage
     {
       public:
-        virtual void Init(const hsk::VkContext* context, const hsk::DenoiserConfig& config) override;
+        virtual void Init(const core::VkContext* context, const stages::DenoiserConfig& config) override;
 
-        virtual void BeforeDenoise(const hsk::FrameRenderInfo& renderInfo) override;
-        virtual void AfterDenoise(const hsk::FrameRenderInfo& renderInfo) override;
+        virtual void BeforeDenoise(const base::FrameRenderInfo& renderInfo) override;
+        virtual void AfterDenoise(const base::FrameRenderInfo& renderInfo) override;
         virtual void DispatchDenoise(uint64_t& timelineValue) override;
 
       protected:
@@ -21,10 +22,10 @@ namespace foray::optix {
         virtual void CreateResolutionDependentComponents() override;
         virtual void DestroyResolutionDependentComponents() override;
 
-        hsk::ManagedImage* mPrimaryInput  = nullptr;
-        hsk::ManagedImage* mAlbedoInput   = nullptr;
-        hsk::ManagedImage* mNormalInput   = nullptr;
-        hsk::ManagedImage* mPrimaryOutput = nullptr;
+        core::ManagedImage* mPrimaryInput  = nullptr;
+        core::ManagedImage* mAlbedoInput   = nullptr;
+        core::ManagedImage* mNormalInput   = nullptr;
+        core::ManagedImage* mPrimaryOutput = nullptr;
 
         OptixDenoiserOptions mDenoiserOptions{};
 
@@ -41,7 +42,7 @@ namespace foray::optix {
 
         struct CudaBuffer
         {
-            hsk::ManagedBuffer Buffer;
+            core::ManagedBuffer Buffer;
 #ifdef WIN32
             HANDLE Handle = {INVALID_HANDLE_VALUE};
 #else
@@ -49,7 +50,7 @@ namespace foray::optix {
 #endif
             void* CudaPtr = nullptr;
 
-            void Setup(const hsk::VkContext* context);
+            void Setup(const core::VkContext* context);
             void Destroy();
         };
 
@@ -59,7 +60,7 @@ namespace foray::optix {
         OptixPixelFormat mPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
         size_t           mSizeOfPixel = 4 * sizeof(uint16_t);
 
-        hsk::DenoiserSynchronisationSemaphore* mSemaphore;
-        cudaExternalSemaphore_t                mCudaSemaphore;
+        stages::DenoiserSynchronisationSemaphore* mSemaphore;
+        cudaExternalSemaphore_t                   mCudaSemaphore;
     };
 }  // namespace foray::optix

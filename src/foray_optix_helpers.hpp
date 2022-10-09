@@ -1,7 +1,7 @@
 #pragma once
 
 #include <optix_types.h>
-#include <hsk_exception.hpp>
+#include <foray_exception.hpp>
 #include <cuda_runtime.h>
 
 namespace foray::optix
@@ -10,7 +10,7 @@ namespace foray::optix
     {
         if (result != CUresult::CUDA_SUCCESS)
         {
-            HSK_THROWFMT("CUDA result assertion failed: \"{}\"", (int32_t)result)
+            FORAY_THROWFMT("CUDA result assertion failed: \"{}\"", (int32_t)result)
         }
     }
 
@@ -18,7 +18,7 @@ namespace foray::optix
     {
         if (result != cudaError_t::cudaSuccess)
         {
-            HSK_THROWFMT("CUDA result assertion failed: \"{}\"", (int32_t)result)
+            FORAY_THROWFMT("CUDA result assertion failed: \"{}\"", (int32_t)result)
         }
     }
 
@@ -26,7 +26,7 @@ namespace foray::optix
     {
         if (result != OptixResult::OPTIX_SUCCESS)
         {
-            HSK_THROWFMT("OptiX result assertion failed: \"{}\"", (int32_t)result)
+            FORAY_THROWFMT("OptiX result assertion failed: \"{}\"", (int32_t)result)
         }
     }
 } // namespace foray::optix

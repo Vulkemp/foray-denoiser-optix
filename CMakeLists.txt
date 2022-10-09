@@ -27,7 +27,7 @@ find_package(Vulkan REQUIRED)
 
 target_link_libraries(
 	${PROJECT_NAME}
-	PUBLIC rtrpf
+	PUBLIC foray
 	PUBLIC cuda
 	PUBLIC cudart
 )
@@ -41,8 +41,8 @@ endif()
 
 target_include_directories(
 	${PROJECT_NAME}
-	PUBLIC "../hsk_rt_rpf/src"
-	PUBLIC "../hsk_rt_rpf/third_party"
+	PUBLIC "../foray/src"
+	PUBLIC "../foray/third_party"
 	PUBLIC $CACHE{OPTIXSDK_INCLUDE}
 	PUBLIC ${Vulkan_INCLUDE_DIRS}
 )
