@@ -4,7 +4,7 @@
 #include <optix.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
-#include <core/foray_logger.hpp>
+#include <foray_logger.hpp>
 
 namespace foray::optix {
     void OptixDebugCallback(unsigned int level, const char* tag, const char* message, void* cbdata)
@@ -27,7 +27,7 @@ namespace foray::optix {
                 break;
         }
 
-        core::logger()->log(loglevel, "[OptiX::{}] {}", tag, message);
+        logger()->log(loglevel, "[OptiX::{}] {}", tag, message);
     }
 
     void OptiXDenoiserStage::Init(const core::VkContext* context, const stages::DenoiserConfig& config)
@@ -272,7 +272,7 @@ namespace foray::optix {
         }
         catch(const std::exception& e)
         {
-            core::logger();
+            logger();
         }
     }
 
