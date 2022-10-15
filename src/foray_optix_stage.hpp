@@ -12,9 +12,9 @@ namespace foray::optix {
       public:
         virtual void Init(const core::VkContext* context, const stages::DenoiserConfig& config) override;
 
-        virtual void BeforeDenoise(const base::FrameRenderInfo& renderInfo) override;
-        virtual void AfterDenoise(const base::FrameRenderInfo& renderInfo) override;
-        virtual void DispatchDenoise(uint64_t& timelineValue) override;
+        virtual void BeforeDenoise(VkCommandBuffer cmdBuffer, const base::FrameRenderInfo& renderInfo) override;
+        virtual void AfterDenoise(VkCommandBuffer cmdBuffer, const base::FrameRenderInfo& renderInfo) override;
+        virtual void DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter);
 
       protected:
         virtual void CreateFixedSizeComponents() override;
@@ -60,7 +60,7 @@ namespace foray::optix {
         OptixPixelFormat mPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
         size_t           mSizeOfPixel = 4 * sizeof(uint16_t);
 
-        stages::DenoiserSynchronisationSemaphore* mSemaphore;
-        cudaExternalSemaphore_t                   mCudaSemaphore;
+        stages::DenoiserSynchronisationSemaphore* mSemaphore     = nullptr;
+        cudaExternalSemaphore_t                   mCudaSemaphore = nullptr;
     };
 }  // namespace foray::optix

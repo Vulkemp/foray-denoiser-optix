@@ -1,10 +1,10 @@
 #include "foray_optix_stage.hpp"
 #include "foray_optix_helpers.hpp"
 #include <cuda_runtime.h>
+#include <foray_logger.hpp>
 #include <optix.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
-#include <foray_logger.hpp>
 
 namespace foray::optix {
     void OptixDebugCallback(unsigned int level, const char* tag, const char* message, void* cbdata)
@@ -32,41 +32,45 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::Init(const core::VkContext* context, const stages::DenoiserConfig& config)
     {
-        
+
         Destroy();
         mContext       = context;
         mPrimaryInput  = config.PrimaryInput;
         mAlbedoInput   = config.AlbedoInput;
         mNormalInput   = config.NormalInput;
         mPrimaryOutput = config.PrimaryOutput;
+        mSemaphore     = config.Semaphore;
 
-        AssertCudaResult(cuInit(0));  // Initialize CUDA driver API.
-
-        CUdevice device = 0;
-        AssertCudaResult(cuCtxCreate(&mCudaContext, CU_CTX_SCHED_SPIN, device));
-
-        // PERF Use CU_STREAM_NON_BLOCKING if there is any work running in parallel on multiple streams.
-        AssertCudaResult(cuStreamCreate(&mCudaStream, CU_STREAM_DEFAULT));
-
-        AssertOptiXResult(optixInit());
-        AssertOptiXResult(optixDeviceContextCreate(mCudaContext, nullptr, &mOptixDevice));
-        AssertOptiXResult(optixDeviceContextSetLogCallback(mOptixDevice, &OptixDebugCallback, nullptr, 4));
-
-        mDenoiserOptions                 = OptixDenoiserOptions{.guideAlbedo = 1, .guideNormal = 1};
-        OptixDenoiserModelKind modelKind = OPTIX_DENOISER_MODEL_KIND_HDR;
-        AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
+        CreateFixedSizeComponents();
+        CreateResolutionDependentComponents();
     }
 
-    void OptiXDenoiserStage::BeforeDenoise(const base::FrameRenderInfo& renderInfo)
+    void OptiXDenoiserStage::BeforeDenoise(VkCommandBuffer cmdBuffer, const base::FrameRenderInfo& renderInfo)
     {
-        VkCommandBuffer cmdBuf = renderInfo.GetCommandBuffer();
-
         {  // STEP #1    Memory barriers before transfer
-            VkImageMemoryBarrier imgMemBarrier{
+            VkImageMemoryBarrier rtImgMemBarrier{
+                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_SHADER_WRITE_BIT,
+                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
+                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image               = mPrimaryInput->GetImage(),
+                .subresourceRange =
+                    VkImageSubresourceRange{
+                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
+                        .baseMipLevel   = 0U,
+                        .levelCount     = 1U,
+                        .baseArrayLayer = 0U,
+                        .layerCount     = 1U,
+                    },
+            };
+            VkImageMemoryBarrier gbufImgMemBarrier{
                 .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                 .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
                 .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -81,18 +85,22 @@ namespace foray::optix {
             };
 
             std::vector<VkImageMemoryBarrier> barriers;
-            barriers.reserve(3);
+            barriers.reserve(2);
 
-            imgMemBarrier.image = mPrimaryInput->GetImage();
-            barriers.push_back(imgMemBarrier);
+            barriers.push_back(rtImgMemBarrier);
 
-            imgMemBarrier.image = mAlbedoInput->GetImage();
-            barriers.push_back(imgMemBarrier);
+            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
 
-            imgMemBarrier.image = mNormalInput->GetImage();
-            barriers.push_back(imgMemBarrier);
+            barriers.clear();
 
-            vkCmdPipelineBarrier(cmdBuf, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+            gbufImgMemBarrier.image = mAlbedoInput->GetImage();
+            barriers.push_back(gbufImgMemBarrier);
+
+            gbufImgMemBarrier.image = mNormalInput->GetImage();
+            barriers.push_back(gbufImgMemBarrier);
+
+            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
         }
         {  // STEP #2    Copy images to buffer
@@ -105,17 +113,35 @@ namespace foray::optix {
                 .imageExtent       = VkExtent3D{.width = mContext->Swapchain.extent.width, .height = mContext->Swapchain.extent.height, .depth = 1},
             };
 
-            vkCmdCopyImageToBuffer(cmdBuf, mPrimaryInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[0].Buffer.GetBuffer(), 1, &imgCopy);
-            vkCmdCopyImageToBuffer(cmdBuf, mAlbedoInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[1].Buffer.GetBuffer(), 1, &imgCopy);
-            vkCmdCopyImageToBuffer(cmdBuf, mNormalInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[2].Buffer.GetBuffer(), 1, &imgCopy);
+            vkCmdCopyImageToBuffer(cmdBuffer, mPrimaryInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[0].Buffer.GetBuffer(), 1, &imgCopy);
+            vkCmdCopyImageToBuffer(cmdBuffer, mAlbedoInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[1].Buffer.GetBuffer(), 1, &imgCopy);
+            vkCmdCopyImageToBuffer(cmdBuffer, mNormalInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[2].Buffer.GetBuffer(), 1, &imgCopy);
         }
         {  // STEP #3    Memory barriers after transfer
-            VkImageMemoryBarrier imgMemBarrier{
+            VkImageMemoryBarrier rtImgMemBarrier{
                 .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_NONE,
+                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image               = mPrimaryInput->GetImage(),
+                .subresourceRange =
+                    VkImageSubresourceRange{
+                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
+                        .baseMipLevel   = 0U,
+                        .levelCount     = 1U,
+                        .baseArrayLayer = 0U,
+                        .layerCount     = 1U,
+                    },
+            };
+            VkImageMemoryBarrier gbufImgMemBarrier{
+                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
+                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_NONE,
+                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .subresourceRange =
@@ -131,29 +157,26 @@ namespace foray::optix {
             std::vector<VkImageMemoryBarrier> barriers;
             barriers.reserve(3);
 
-            imgMemBarrier.image = mPrimaryInput->GetImage();
-            barriers.push_back(imgMemBarrier);
+            barriers.push_back(rtImgMemBarrier);
 
-            imgMemBarrier.image = mAlbedoInput->GetImage();
-            barriers.push_back(imgMemBarrier);
+            gbufImgMemBarrier.image = mAlbedoInput->GetImage();
+            barriers.push_back(gbufImgMemBarrier);
 
-            imgMemBarrier.image = mNormalInput->GetImage();
-            barriers.push_back(imgMemBarrier);
+            gbufImgMemBarrier.image = mNormalInput->GetImage();
+            barriers.push_back(gbufImgMemBarrier);
 
-            vkCmdPipelineBarrier(cmdBuf, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
         }
     }
-    void OptiXDenoiserStage::AfterDenoise(const base::FrameRenderInfo& renderInfo)
+    void OptiXDenoiserStage::AfterDenoise(VkCommandBuffer cmdBuffer, const base::FrameRenderInfo& renderInfo)
     {
-        VkCommandBuffer cmdBuf = renderInfo.GetCommandBuffer();
-
         {  // STEP #1    Memory barriers before transfer
             VkImageMemoryBarrier imgMemBarrier{
                 .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
+                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_NONE,
                 .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_WRITE_BIT,
-                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
                 .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -168,7 +191,7 @@ namespace foray::optix {
                     },
             };
 
-            vkCmdPipelineBarrier(cmdBuf, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &imgMemBarrier);
         }
         {  // STEP #2    Copy buffer to image
@@ -181,7 +204,7 @@ namespace foray::optix {
                 .imageExtent       = VkExtent3D{.width = mContext->Swapchain.extent.width, .height = mContext->Swapchain.extent.height, .depth = 1},
             };
 
-            vkCmdCopyBufferToImage(cmdBuf, mOutputBuffer.Buffer.GetBuffer(), mPrimaryInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
+            vkCmdCopyBufferToImage(cmdBuffer, mOutputBuffer.Buffer.GetBuffer(), mPrimaryOutput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
         }
         {  // STEP #3    Memory barriers after transfer
             VkImageMemoryBarrier imgMemBarrier{
@@ -203,11 +226,11 @@ namespace foray::optix {
                     },
             };
 
-            vkCmdPipelineBarrier(cmdBuf, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &imgMemBarrier);
         }
     }
-    void OptiXDenoiserStage::DispatchDenoise(uint64_t& timelineValue)
+    void OptiXDenoiserStage::DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter)
     {
         try
         {
@@ -243,7 +266,7 @@ namespace foray::optix {
             // Wait from Vulkan (Copy to Buffer)
             cudaExternalSemaphoreWaitParams waitParams{};
             waitParams.flags              = 0;
-            waitParams.params.fence.value = timelineValue;
+            waitParams.params.fence.value = timelineValueBefore;
             cudaWaitExternalSemaphoresAsync(&mCudaSemaphore, &waitParams, 1, nullptr);
 
             if(!!mCudaIntensity)
@@ -267,7 +290,7 @@ namespace foray::optix {
 
             cudaExternalSemaphoreSignalParams sigParams{};
             sigParams.flags              = 0;
-            sigParams.params.fence.value = ++timelineValue;
+            sigParams.params.fence.value = timelineValueAfter;
             cudaSignalExternalSemaphoresAsync(&mCudaSemaphore, &sigParams, 1, mCudaStream);
         }
         catch(const std::exception& e)
@@ -278,12 +301,27 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::CreateFixedSizeComponents()
     {
+        AssertCudaResult(cuInit(0));  // Initialize CUDA driver API.
+
+        CUdevice device = 0;
+        AssertCudaResult(cuCtxCreate(&mCudaContext, CU_CTX_SCHED_SPIN, device));
+
+        // PERF Use CU_STREAM_NON_BLOCKING if there is any work running in parallel on multiple streams.
+        AssertCudaResult(cuStreamCreate(&mCudaStream, CU_STREAM_DEFAULT));
+
+        AssertOptiXResult(optixInit());
+        AssertOptiXResult(optixDeviceContextCreate(mCudaContext, nullptr, &mOptixDevice));
+        AssertOptiXResult(optixDeviceContextSetLogCallback(mOptixDevice, &OptixDebugCallback, nullptr, 4));
+
+        mDenoiserOptions                 = OptixDenoiserOptions{.guideAlbedo = 1, .guideNormal = 1};
+        OptixDenoiserModelKind modelKind = OPTIX_DENOISER_MODEL_KIND_HDR;
+        AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
+
 #ifdef WIN32
         // auto handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
 #else
-        auto                    handleType = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+        auto handleType                       = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
 #endif
-
 
         cudaExternalSemaphoreHandleDesc externalSemaphoreHandleDesc;
         std::memset(&externalSemaphoreHandleDesc, 0, sizeof(externalSemaphoreHandleDesc));
@@ -305,6 +343,27 @@ namespace foray::optix {
             cudaDestroyExternalSemaphore(mCudaSemaphore);
             mCudaSemaphore = nullptr;
         }
+        if(!!mOptixDenoiser)
+        {
+            optixDenoiserDestroy(mOptixDenoiser);
+            mOptixDenoiser = nullptr;
+        }
+        if(!!mOptixDevice)
+        {
+            optixDeviceContextDestroy(mOptixDevice);
+            mOptixDevice = nullptr;
+        }
+
+        if(!!mCudaStream)
+        {
+            cuStreamDestroy(mCudaStream);
+            mCudaStream = nullptr;
+        }
+        if(!!mCudaContext)
+        {
+            cuCtxDestroy(mCudaContext);
+            mCudaContext = nullptr;
+        }
     }
     void OptiXDenoiserStage::CreateResolutionDependentComponents()
     {
@@ -317,7 +376,7 @@ namespace foray::optix {
                                  | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
 
         core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
-                                                          VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, "OptiX Denoise Noisy Input");
+                                                           VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, "OptiX Denoise Noisy Input");
 
         mInputBuffers[0].Buffer.Create(mContext, bufCi);
         mInputBuffers[0].Setup(mContext);
@@ -388,8 +447,8 @@ namespace foray::optix {
         // cudaExtMemHandleDesc.type = cudaExternalMemoryHandleTypeOpaqueWin32;
         // cudaExtMemHandleDesc.handle.win32.handle = buf.handle;
 #else
-        cudaExtMemHandleDesc.type      = cudaExternalMemoryHandleTypeOpaqueFd;
-        cudaExtMemHandleDesc.handle.fd = Handle;
+        cudaExtMemHandleDesc.type             = cudaExternalMemoryHandleTypeOpaqueFd;
+        cudaExtMemHandleDesc.handle.fd        = Handle;
 #endif
 
         cudaExternalMemory_t cudaExtMemVertexBuffer{};
