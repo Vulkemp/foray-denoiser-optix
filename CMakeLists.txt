@@ -28,15 +28,25 @@ find_package(Vulkan REQUIRED)
 target_link_libraries(
 	${PROJECT_NAME}
 	PUBLIC foray
-	PUBLIC cuda
-	PUBLIC cudart
 )
 
 if (WIN32)
+	set(CUDA_LIB "$ENV{CUDA_PATH}/lib/x64/cuda.lib")
+	set(CUDART_LIB "$ENV{CUDA_PATH}/lib/x64/cudart.lib")
+
 	target_link_libraries(
 		${PROJECT_NAME}
 		PUBLIC ${SDL2_LIBRARIES}
+		PUBLIC ${CUDART_LIB}
+		PUBLIC ${CUDA_LIB}
 	)
+else ()
+	target_link_libraries(
+		${PROJECT_NAME}
+		PUBLIC cuda
+		PUBLIC cudart
+)
+
 endif()
 
 target_include_directories(
