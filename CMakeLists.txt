@@ -45,4 +45,5 @@ target_include_directories(
 	PUBLIC "../foray/third_party"
 	PUBLIC $CACHE{OPTIXSDK_INCLUDE}
 	PUBLIC ${Vulkan_INCLUDE_DIRS}
+	PUBLIC ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )

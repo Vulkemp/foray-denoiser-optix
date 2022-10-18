@@ -1,7 +1,9 @@
 #include "foray_optix_stage.hpp"
 #include "foray_optix_helpers.hpp"
+#include <core/foray_vkcontext.hpp>
 #include <cuda_runtime.h>
 #include <foray_logger.hpp>
+#include <foray_vulkan.hpp>
 #include <optix.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
@@ -245,7 +247,7 @@ namespace foray::optix {
             // Create and set our OptiX layers
 
             OptixImage2D imageBase{
-                .width = size.width, .height = size.height, .rowStrideInBytes = rowStrideInBytes, .pixelStrideInBytes = (uint)sizeofPixel, .format = pixelFormat};
+                .width = size.width, .height = size.height, .rowStrideInBytes = rowStrideInBytes, .pixelStrideInBytes = (uint32_t)sizeofPixel, .format = pixelFormat};
 
             OptixDenoiserLayer layerBase{
                 .input          = imageBase,
@@ -318,7 +320,7 @@ namespace foray::optix {
         AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
 
 #ifdef WIN32
-        // auto handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+        auto handleType = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
 #else
         auto handleType                       = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
 #endif
@@ -328,7 +330,7 @@ namespace foray::optix {
         externalSemaphoreHandleDesc.flags = 0;
 #ifdef WIN32
         externalSemaphoreHandleDesc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
-        externalSemaphoreHandleDesc.handle.win32.handle = (void*)m_semaphore.handle;
+        externalSemaphoreHandleDesc.handle.win32.handle = reinterpret_cast<void*>(mSemaphore->GetHandle());
 #else
         externalSemaphoreHandleDesc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
         externalSemaphoreHandleDesc.handle.fd = mSemaphore->GetHandle();
@@ -428,15 +430,29 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::CudaBuffer::Setup(const core::VkContext* context)
     {
+#ifdef WIN32
+        VkMemoryGetWin32HandleInfoKHR memInfo{
+            .sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR,
+            .memory     = Buffer.GetAllocationInfo().deviceMemory,
+            .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+        };
+
+        VkDevice device = context->Device;
+
+        PFN_vkGetMemoryWin32HandleKHR getHandleFunc = reinterpret_cast<PFN_vkGetMemoryWin32HandleKHR>(vkGetDeviceProcAddr(device, "vkGetMemoryWin32HandleKHR"));
+
+        if(!getHandleFunc)
+        {
+            Exception::Throw("Unable to resolve vkGetMemoryWin32HandleKHR device proc addr!");
+        }
+
+        getHandleFunc(device, &memInfo, &Handle);
+
+#else
         VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
                                      .memory     = Buffer.GetAllocationInfo().deviceMemory,
                                      .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
         context->DispatchTable.getMemoryFdKHR(&memInfo, &Handle);
-#ifdef WIN32
-#pragma message "Windows Support WIP"
-
-        // buf.handle = m_device.getMemoryWin32HandleKHR({memInfo.memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
-#else
 #endif
         VkMemoryRequirements requirements{};
         vkGetBufferMemoryRequirements(context->Device, Buffer.GetBuffer(), &requirements);
@@ -444,11 +460,11 @@ namespace foray::optix {
         cudaExternalMemoryHandleDesc cudaExtMemHandleDesc{};
         cudaExtMemHandleDesc.size = requirements.size;
 #ifdef WIN32
-        // cudaExtMemHandleDesc.type = cudaExternalMemoryHandleTypeOpaqueWin32;
-        // cudaExtMemHandleDesc.handle.win32.handle = buf.handle;
+        cudaExtMemHandleDesc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
+        cudaExtMemHandleDesc.handle.win32.handle = Handle;
 #else
-        cudaExtMemHandleDesc.type             = cudaExternalMemoryHandleTypeOpaqueFd;
-        cudaExtMemHandleDesc.handle.fd        = Handle;
+        cudaExtMemHandleDesc.type      = cudaExternalMemoryHandleTypeOpaqueFd;
+        cudaExtMemHandleDesc.handle.fd = Handle;
 #endif
 
         cudaExternalMemory_t cudaExtMemVertexBuffer{};
@@ -470,7 +486,11 @@ namespace foray::optix {
     {
         Buffer.Destroy();
 #ifdef WIN32
-        CloseHandle(Handle);
+        if(Handle != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(Handle);
+            Handle = INVALID_HANDLE_VALUE;
+        }
 #else
         if(Handle != -1)
         {
