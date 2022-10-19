@@ -12,8 +12,8 @@ namespace foray::optix {
       public:
         virtual void Init(const core::VkContext* context, const stages::DenoiserConfig& config) override;
 
-        virtual void BeforeDenoise(VkCommandBuffer cmdBuffer, const base::FrameRenderInfo& renderInfo) override;
-        virtual void AfterDenoise(VkCommandBuffer cmdBuffer, const base::FrameRenderInfo& renderInfo) override;
+        virtual void BeforeDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
+        virtual void AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
         virtual void DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter);
 
       protected:
