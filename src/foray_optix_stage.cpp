@@ -50,59 +50,23 @@ namespace foray::optix {
     void OptiXDenoiserStage::BeforeDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {
         {  // STEP #1    Memory barriers before transfer
-            VkImageMemoryBarrier rtImgMemBarrier{
-                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_MEMORY_WRITE_BIT,
-                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image               = mPrimaryInput->GetImage(),
-                .subresourceRange =
-                    VkImageSubresourceRange{
-                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
-                        .baseMipLevel   = 0U,
-                        .levelCount     = 1U,
-                        .baseArrayLayer = 0U,
-                        .layerCount     = 1U,
-                    },
-            };
-            renderInfo.GetImageLayoutCache().Set(mPrimaryInput, rtImgMemBarrier, VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            VkImageMemoryBarrier gbufImgMemBarrier{
-                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .subresourceRange =
-                    VkImageSubresourceRange{
-                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
-                        .baseMipLevel   = 0U,
-                        .levelCount     = 1U,
-                        .baseArrayLayer = 0U,
-                        .layerCount     = 1U,
-                    },
-            };
+            core::ImageLayoutCache::Barrier2 barrier{.SrcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                                     .SrcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                                                     .DstStageMask  = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                     .DstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                     .NewLayout     = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL};
 
-            std::vector<VkImageMemoryBarrier> barriers;
-            barriers.reserve(2);
+            std::vector<VkImageMemoryBarrier2> barriers;
+            barriers.reserve(3);
 
-            barriers.push_back(rtImgMemBarrier);
+            barriers.push_back(renderInfo.GetImageLayoutCache().Set(mPrimaryInput, barrier));
+            barriers.push_back(renderInfo.GetImageLayoutCache().Set(mAlbedoInput, barrier));
+            barriers.push_back(renderInfo.GetImageLayoutCache().Set(mNormalInput, barrier));
 
-            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
+            VkDependencyInfo depInfo{
+                .sType = VkStructureType::VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = (uint32_t)barriers.size(), .pImageMemoryBarriers = barriers.data()};
 
-            barriers.clear();
-
-            renderInfo.GetImageLayoutCache().Set(mAlbedoInput, gbufImgMemBarrier, VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            barriers.push_back(gbufImgMemBarrier);
-
-            renderInfo.GetImageLayoutCache().Set(mNormalInput, gbufImgMemBarrier, VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            barriers.push_back(gbufImgMemBarrier);
-
-            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
+            vkCmdPipelineBarrier2(cmdBuffer, &depInfo);
         }
         {  // STEP #2    Copy images to buffer
             VkBufferImageCopy imgCopy{
@@ -118,76 +82,17 @@ namespace foray::optix {
             vkCmdCopyImageToBuffer(cmdBuffer, mAlbedoInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[1].Buffer.GetBuffer(), 1, &imgCopy);
             vkCmdCopyImageToBuffer(cmdBuffer, mNormalInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[2].Buffer.GetBuffer(), 1, &imgCopy);
         }
-        {  // STEP #3    Memory barriers after transfer
-            VkImageMemoryBarrier rtImgMemBarrier{
-                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_NONE,
-                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image               = mPrimaryInput->GetImage(),
-                .subresourceRange =
-                    VkImageSubresourceRange{
-                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
-                        .baseMipLevel   = 0U,
-                        .levelCount     = 1U,
-                        .baseArrayLayer = 0U,
-                        .layerCount     = 1U,
-                    },
-            };
-            VkImageMemoryBarrier gbufImgMemBarrier{
-                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_NONE,
-                .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .subresourceRange =
-                    VkImageSubresourceRange{
-                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
-                        .baseMipLevel   = 0U,
-                        .levelCount     = 1U,
-                        .baseArrayLayer = 0U,
-                        .layerCount     = 1U,
-                    },
-            };
-            std::vector<VkImageMemoryBarrier> barriers;
-            barriers.reserve(3);
-            barriers.push_back(rtImgMemBarrier);
-            gbufImgMemBarrier.image = mAlbedoInput->GetImage();
-            barriers.push_back(gbufImgMemBarrier);
-            gbufImgMemBarrier.image = mNormalInput->GetImage();
-            barriers.push_back(gbufImgMemBarrier);
-            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                                 VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
-        }
     }
     void OptiXDenoiserStage::AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {
         {  // STEP #1    Memory barriers before transfer
-            VkImageMemoryBarrier imgMemBarrier{
-                .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_NONE,
-                .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_WRITE_BIT,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image               = mPrimaryOutput->GetImage(),
-                .subresourceRange =
-                    VkImageSubresourceRange{
-                        .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
-                        .baseMipLevel   = 0U,
-                        .levelCount     = 1U,
-                        .baseArrayLayer = 0U,
-                        .layerCount     = 1U,
-                    },
-            };
-            renderInfo.GetImageLayoutCache().Set(mPrimaryOutput, imgMemBarrier, VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            core::ImageLayoutCache::Barrier2 barrier{.SrcStageMask  = VK_PIPELINE_STAGE_2_NONE,
+                                                           .SrcAccessMask = VK_ACCESS_2_NONE,
+                                                           .DstStageMask  = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                           .DstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                           .NewLayout     = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
 
-            vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &imgMemBarrier);
+            renderInfo.GetImageLayoutCache().CmdBarrier(cmdBuffer, mPrimaryOutput, barrier);
         }
         {  // STEP #2    Copy buffer to image
             VkBufferImageCopy imgCopy{
@@ -201,28 +106,6 @@ namespace foray::optix {
 
             vkCmdCopyBufferToImage(cmdBuffer, mOutputBuffer.Buffer.GetBuffer(), mPrimaryOutput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
         }
-        // {  // STEP #3    Memory barriers after transfer
-        //     VkImageMemoryBarrier imgMemBarrier{
-        //         .sType               = VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        //         .srcAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_WRITE_BIT,
-        //         .dstAccessMask       = VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
-        //         .oldLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        //         .newLayout           = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        //         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        //         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        //         .image               = mPrimaryOutput->GetImage(),
-        //         .subresourceRange =
-        //             VkImageSubresourceRange{
-        //                 .aspectMask     = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT,
-        //                 .baseMipLevel   = 0U,
-        //                 .levelCount     = 1U,
-        //                 .baseArrayLayer = 0U,
-        //                 .layerCount     = 1U,
-        //             },
-        //     };
-        //     vkCmdPipelineBarrier(cmdBuffer, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-        //                          VkDependencyFlagBits::VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 0, nullptr, 1, &imgMemBarrier);
-        // }
     }
     void OptiXDenoiserStage::DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter)
     {
