@@ -6,6 +6,10 @@
 #include <optix_types.h>
 #include <stages/foray_denoiserstage.hpp>
 
+// TODO: Motion Data is useless because OptiX requires a different Motion Vector format: https://raytracing-docs.nvidia.com/optix7/guide/index.html#ai_denoiser#temporal-denoising-modes
+// Ours uses normalized texture coordinates [0...1], theirs uses texel coordinates [0...width] / [0...height]
+// Note: this could easily be fixed with the help of a compute shader
+
 namespace foray::optix {
     class OptiXDenoiserStage : public stages::DenoiserStage
     {
@@ -25,6 +29,7 @@ namespace foray::optix {
         core::ManagedImage* mPrimaryInput  = nullptr;
         core::ManagedImage* mAlbedoInput   = nullptr;
         core::ManagedImage* mNormalInput   = nullptr;
+        core::ManagedImage* mMotionInput   = nullptr;
         core::ManagedImage* mPrimaryOutput = nullptr;
 
         OptixDenoiserOptions mDenoiserOptions{};
@@ -54,13 +59,24 @@ namespace foray::optix {
             void Destroy();
         };
 
-        std::array<CudaBuffer, 3> mInputBuffers;
-        CudaBuffer                mOutputBuffer;
+        enum EInputBufferKind
+        {
+            Source,
+            Albedo,
+            Normal,
+            Motion
+        };
+
+        std::array<CudaBuffer, 4> mInputBuffers;
+        CudaBuffer mOutputBuffer;
 
         OptixPixelFormat mPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
+        OptixPixelFormat mMotionPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF2;
         size_t           mSizeOfPixel = 4 * sizeof(uint16_t);
 
         stages::DenoiserSynchronisationSemaphore* mSemaphore     = nullptr;
         cudaExternalSemaphore_t                   mCudaSemaphore = nullptr;
+
+        uint32_t mDenoisedFrames = 0;
     };
 }  // namespace foray::optix
