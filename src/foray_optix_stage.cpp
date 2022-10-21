@@ -1,6 +1,6 @@
 #include "foray_optix_stage.hpp"
 #include "foray_optix_helpers.hpp"
-#include <core/foray_vkcontext.hpp>
+#include <core/foray_context.hpp>
 #include <cuda_runtime.h>
 #include <foray_logger.hpp>
 #include <foray_vulkan.hpp>
@@ -32,7 +32,7 @@ namespace foray::optix {
         logger()->log(loglevel, "[OptiX::{}] {}", tag, message);
     }
 
-    void OptiXDenoiserStage::Init(const core::VkContext* context, const stages::DenoiserConfig& config)
+    void OptiXDenoiserStage::Init(core::Context* context, const stages::DenoiserConfig& config)
     {
 
         Destroy();
@@ -75,7 +75,7 @@ namespace foray::optix {
                 .bufferImageHeight = 0,
                 .imageSubresource  = VkImageSubresourceLayers{.aspectMask = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
                 .imageOffset       = VkOffset3D{},
-                .imageExtent       = VkExtent3D{.width = mContext->Swapchain.extent.width, .height = mContext->Swapchain.extent.height, .depth = 1},
+                .imageExtent       = VkExtent3D{.width = mContext->GetSwapchainSize().width, .height = mContext->GetSwapchainSize().height, .depth = 1},
             };
 
             vkCmdCopyImageToBuffer(cmdBuffer, mPrimaryInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mInputBuffers[0].Buffer.GetBuffer(), 1, &imgCopy);
@@ -101,7 +101,7 @@ namespace foray::optix {
                 .bufferImageHeight = 0,
                 .imageSubresource  = VkImageSubresourceLayers{.aspectMask = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
                 .imageOffset       = VkOffset3D{},
-                .imageExtent       = VkExtent3D{.width = mContext->Swapchain.extent.width, .height = mContext->Swapchain.extent.height, .depth = 1},
+                .imageExtent       = VkExtent3D{.width = mContext->GetSwapchainSize().width, .height = mContext->GetSwapchainSize().height, .depth = 1},
             };
 
             vkCmdCopyBufferToImage(cmdBuffer, mOutputBuffer.Buffer.GetBuffer(), mPrimaryOutput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
@@ -111,7 +111,7 @@ namespace foray::optix {
     {
         try
         {
-            VkExtent2D size = mContext->Swapchain.extent;
+            VkExtent2D size = mContext->GetSwapchainSize();
 
             OptixPixelFormat pixelFormat      = mPixelFormat;
             auto             sizeofPixel      = mSizeOfPixel;
@@ -244,7 +244,7 @@ namespace foray::optix {
     }
     void OptiXDenoiserStage::CreateResolutionDependentComponents()
     {
-        VkExtent3D extent = {mContext->Swapchain.extent.width, mContext->Swapchain.extent.height, 1};
+        VkExtent3D extent = {mContext->GetSwapchainSize().width, mContext->GetSwapchainSize().height, 1};
 
         VkDeviceSize size = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height * mSizeOfPixel;
 
@@ -303,7 +303,7 @@ namespace foray::optix {
         }
     }
 
-    void OptiXDenoiserStage::CudaBuffer::Setup(const core::VkContext* context)
+    void OptiXDenoiserStage::CudaBuffer::Setup(core::Context* context)
     {
 #ifdef WIN32
         VkMemoryGetWin32HandleInfoKHR memInfo{
@@ -327,10 +327,10 @@ namespace foray::optix {
         VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
                                      .memory     = Buffer.GetAllocationInfo().deviceMemory,
                                      .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
-        context->DispatchTable.getMemoryFdKHR(&memInfo, &Handle);
+        context->VkbDispatchTable->getMemoryFdKHR(&memInfo, &Handle);
 #endif
         VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(context->Device, Buffer.GetBuffer(), &requirements);
+        vkGetBufferMemoryRequirements(context->Device(), Buffer.GetBuffer(), &requirements);
 
         cudaExternalMemoryHandleDesc cudaExtMemHandleDesc{};
         cudaExtMemHandleDesc.size = requirements.size;

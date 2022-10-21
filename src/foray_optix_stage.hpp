@@ -10,7 +10,7 @@ namespace foray::optix {
     class OptiXDenoiserStage : public stages::DenoiserStage
     {
       public:
-        virtual void Init(const core::VkContext* context, const stages::DenoiserConfig& config) override;
+        virtual void Init(core::Context* context, const stages::DenoiserConfig& config) override;
 
         virtual void BeforeDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
         virtual void AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
@@ -50,7 +50,7 @@ namespace foray::optix {
 #endif
             void* CudaPtr = nullptr;
 
-            void Setup(const core::VkContext* context);
+            void Setup(core::Context* context);
             void Destroy();
         };
 
