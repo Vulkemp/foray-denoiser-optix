@@ -9,6 +9,9 @@
 #include <optix_stubs.h>
 
 namespace foray::optix {
+
+#pragma region Debug Callback
+
     void OptixDebugCallback(unsigned int level, const char* tag, const char* message, void* cbdata)
     {
         spdlog::level::level_enum loglevel;
@@ -32,6 +35,9 @@ namespace foray::optix {
         logger()->log(loglevel, "[OptiX::{}] {}", tag, message);
     }
 
+#pragma endregion
+#pragma region Init
+
     void OptiXDenoiserStage::Init(core::Context* context, const stages::DenoiserConfig& config)
     {
 
@@ -51,6 +57,102 @@ namespace foray::optix {
         CreateFixedSizeComponents();
         CreateResolutionDependentComponents();
     }
+
+    void OptiXDenoiserStage::CreateFixedSizeComponents()
+    {
+        AssertCudaResult(cuInit(0));  // Initialize CUDA driver API.
+
+        CUdevice device = 0;
+        AssertCudaResult(cuCtxCreate(&mCudaContext, CU_CTX_SCHED_SPIN, device));
+
+        // PERF Use CU_STREAM_NON_BLOCKING if there is any work running in parallel on multiple streams.
+        AssertCudaResult(cuStreamCreate(&mCudaStream, CU_STREAM_DEFAULT));
+
+        AssertOptiXResult(optixInit());
+        AssertOptiXResult(optixDeviceContextCreate(mCudaContext, nullptr, &mOptixDevice));
+        AssertOptiXResult(optixDeviceContextSetLogCallback(mOptixDevice, &OptixDebugCallback, nullptr, 4));
+
+        mDenoiserOptions                 = OptixDenoiserOptions{.guideAlbedo = !!mAlbedoInput, .guideNormal = !!mNormalInput};
+        OptixDenoiserModelKind modelKind = (!!mMotionInput) ? OPTIX_DENOISER_MODEL_KIND_TEMPORAL : OPTIX_DENOISER_MODEL_KIND_HDR;
+        AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
+
+#ifdef WIN32
+        auto handleType = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
+        auto handleType                       = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
+
+        cudaExternalSemaphoreHandleDesc externalSemaphoreHandleDesc;
+        std::memset(&externalSemaphoreHandleDesc, 0, sizeof(externalSemaphoreHandleDesc));
+        externalSemaphoreHandleDesc.flags = 0;
+#ifdef WIN32
+        externalSemaphoreHandleDesc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
+        externalSemaphoreHandleDesc.handle.win32.handle = reinterpret_cast<void*>(mSemaphore->GetHandle());
+#else
+        externalSemaphoreHandleDesc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+        externalSemaphoreHandleDesc.handle.fd = mSemaphore->GetHandle();
+#endif
+
+        AssertCudaResult(cudaImportExternalSemaphore(&mCudaSemaphore, &externalSemaphoreHandleDesc));
+    }
+
+    void OptiXDenoiserStage::CreateResolutionDependentComponents()
+    {
+        VkExtent3D extent = {mContext->GetSwapchainSize().width, mContext->GetSwapchainSize().height, 1};
+
+        VkDeviceSize size = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height * mSizeOfPixel;
+
+        // Using direct method
+        VkBufferUsageFlags usage{VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                 | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+
+        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
+                                                           VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, "OptiX Denoise Noisy Input");
+
+        mInputBuffers[EInputBufferKind::Source].Buffer.Create(mContext, bufCi);
+        mInputBuffers[EInputBufferKind::Source].SetupExportHandles(mContext);
+
+        if(!!mAlbedoInput)
+        {
+            bufCi.Name = "OptiX Denoise Albedo Input";
+            mInputBuffers[EInputBufferKind::Albedo].Buffer.Create(mContext, bufCi);
+            mInputBuffers[EInputBufferKind::Albedo].SetupExportHandles(mContext);
+        }
+
+        if(!!mNormalInput)
+        {
+            bufCi.Name = "OptiX Denoise Normal Input";
+            mInputBuffers[EInputBufferKind::Normal].Buffer.Create(mContext, bufCi);
+            mInputBuffers[EInputBufferKind::Normal].SetupExportHandles(mContext);
+        }
+
+        if(!!mMotionInput)
+        {
+            bufCi.Name = "OptiX Denoise Motion Input";
+            mInputBuffers[EInputBufferKind::Motion].Buffer.Create(mContext, bufCi);
+            mInputBuffers[EInputBufferKind::Motion].SetupExportHandles(mContext);
+        }
+
+        // Output image/buffer
+
+        bufCi.Name = "OptiX Denoise Output";
+        mOutputBuffer.Buffer.Create(mContext, bufCi);
+        mOutputBuffer.SetupExportHandles(mContext);
+
+        // Computing the amount of memory needed to do the denoiser
+        AssertOptiXResult(optixDenoiserComputeMemoryResources(mOptixDenoiser, extent.width, extent.height, &mDenoiserSizes));
+
+        AssertCudaResult(cudaMalloc((void**)&mCudaStateBuffer, mDenoiserSizes.stateSizeInBytes));
+        AssertCudaResult(cudaMalloc((void**)&mCudaScratchBuffer, mDenoiserSizes.withoutOverlapScratchSizeInBytes));
+        AssertCudaResult(cudaMalloc((void**)&mCudaMinRGB, 4 * sizeof(float)));
+        AssertCudaResult(cudaMalloc((void**)&mCudaIntensity, 1 * sizeof(float)));
+
+        AssertOptiXResult(optixDenoiserSetup(mOptixDenoiser, mCudaStream, extent.width, extent.height, mCudaStateBuffer, mDenoiserSizes.stateSizeInBytes, mCudaScratchBuffer,
+                                             mDenoiserSizes.withoutOverlapScratchSizeInBytes));
+    }
+
+#pragma endregion
+#pragma region Render
 
     void OptiXDenoiserStage::BeforeDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {
@@ -110,30 +212,6 @@ namespace foray::optix {
                 vkCmdCopyImageToBuffer(cmdBuffer, mMotionInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                        mInputBuffers[EInputBufferKind::Motion].Buffer.GetBuffer(), 1, &imgCopy);
             }
-        }
-    }
-    void OptiXDenoiserStage::AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
-    {
-        {  // STEP #1    Memory barriers before transfer
-            core::ImageLayoutCache::Barrier2 barrier{.SrcStageMask  = VK_PIPELINE_STAGE_2_NONE,
-                                                     .SrcAccessMask = VK_ACCESS_2_NONE,
-                                                     .DstStageMask  = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                                     .DstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                     .NewLayout     = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
-
-            renderInfo.GetImageLayoutCache().CmdBarrier(cmdBuffer, mPrimaryOutput, barrier);
-        }
-        {  // STEP #2    Copy buffer to image
-            VkBufferImageCopy imgCopy{
-                .bufferOffset      = 0,
-                .bufferRowLength   = 0,
-                .bufferImageHeight = 0,
-                .imageSubresource  = VkImageSubresourceLayers{.aspectMask = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
-                .imageOffset       = VkOffset3D{},
-                .imageExtent       = VkExtent3D{.width = mContext->GetSwapchainSize().width, .height = mContext->GetSwapchainSize().height, .depth = 1},
-            };
-
-            vkCmdCopyBufferToImage(cmdBuffer, mOutputBuffer.Buffer.GetBuffer(), mPrimaryOutput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
         }
     }
 
@@ -226,43 +304,34 @@ namespace foray::optix {
         }
     }
 
-    void OptiXDenoiserStage::CreateFixedSizeComponents()
+    void OptiXDenoiserStage::AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {
-        AssertCudaResult(cuInit(0));  // Initialize CUDA driver API.
+        {  // STEP #1    Memory barriers before transfer
+            core::ImageLayoutCache::Barrier2 barrier{.SrcStageMask  = VK_PIPELINE_STAGE_2_NONE,
+                                                     .SrcAccessMask = VK_ACCESS_2_NONE,
+                                                     .DstStageMask  = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                     .DstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                     .NewLayout     = VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
 
-        CUdevice device = 0;
-        AssertCudaResult(cuCtxCreate(&mCudaContext, CU_CTX_SCHED_SPIN, device));
+            renderInfo.GetImageLayoutCache().CmdBarrier(cmdBuffer, mPrimaryOutput, barrier);
+        }
+        {  // STEP #2    Copy buffer to image
+            VkBufferImageCopy imgCopy{
+                .bufferOffset      = 0,
+                .bufferRowLength   = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource  = VkImageSubresourceLayers{.aspectMask = VkImageAspectFlagBits::VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
+                .imageOffset       = VkOffset3D{},
+                .imageExtent       = VkExtent3D{.width = mContext->GetSwapchainSize().width, .height = mContext->GetSwapchainSize().height, .depth = 1},
+            };
 
-        // PERF Use CU_STREAM_NON_BLOCKING if there is any work running in parallel on multiple streams.
-        AssertCudaResult(cuStreamCreate(&mCudaStream, CU_STREAM_DEFAULT));
-
-        AssertOptiXResult(optixInit());
-        AssertOptiXResult(optixDeviceContextCreate(mCudaContext, nullptr, &mOptixDevice));
-        AssertOptiXResult(optixDeviceContextSetLogCallback(mOptixDevice, &OptixDebugCallback, nullptr, 4));
-
-        mDenoiserOptions                 = OptixDenoiserOptions{.guideAlbedo = !!mAlbedoInput, .guideNormal = !!mNormalInput};
-        OptixDenoiserModelKind modelKind = (!!mMotionInput) ? OPTIX_DENOISER_MODEL_KIND_TEMPORAL : OPTIX_DENOISER_MODEL_KIND_HDR;
-        AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
-
-#ifdef WIN32
-        auto handleType = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-#else
-        auto handleType                       = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
-#endif
-
-        cudaExternalSemaphoreHandleDesc externalSemaphoreHandleDesc;
-        std::memset(&externalSemaphoreHandleDesc, 0, sizeof(externalSemaphoreHandleDesc));
-        externalSemaphoreHandleDesc.flags = 0;
-#ifdef WIN32
-        externalSemaphoreHandleDesc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
-        externalSemaphoreHandleDesc.handle.win32.handle = reinterpret_cast<void*>(mSemaphore->GetHandle());
-#else
-        externalSemaphoreHandleDesc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
-        externalSemaphoreHandleDesc.handle.fd = mSemaphore->GetHandle();
-#endif
-
-        AssertCudaResult(cudaImportExternalSemaphore(&mCudaSemaphore, &externalSemaphoreHandleDesc));
+            vkCmdCopyBufferToImage(cmdBuffer, mOutputBuffer.Buffer.GetBuffer(), mPrimaryOutput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
+        }
     }
+
+#pragma endregion
+#pragma region Destroy
+
     void OptiXDenoiserStage::DestroyFixedComponents()
     {
         if(!!mCudaSemaphore)
@@ -292,60 +361,7 @@ namespace foray::optix {
             mCudaContext = nullptr;
         }
     }
-    void OptiXDenoiserStage::CreateResolutionDependentComponents()
-    {
-        VkExtent3D extent = {mContext->GetSwapchainSize().width, mContext->GetSwapchainSize().height, 1};
 
-        VkDeviceSize size = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height * mSizeOfPixel;
-
-        // Using direct method
-        VkBufferUsageFlags usage{VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                 | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
-
-        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
-                                                           VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, "OptiX Denoise Noisy Input");
-
-        mInputBuffers[EInputBufferKind::Source].Buffer.Create(mContext, bufCi);
-        mInputBuffers[EInputBufferKind::Source].Setup(mContext);
-
-        if(!!mAlbedoInput)
-        {
-            bufCi.Name = "OptiX Denoise Albedo Input";
-            mInputBuffers[EInputBufferKind::Albedo].Buffer.Create(mContext, bufCi);
-            mInputBuffers[EInputBufferKind::Albedo].Setup(mContext);
-        }
-
-        if(!!mNormalInput)
-        {
-            bufCi.Name = "OptiX Denoise Normal Input";
-            mInputBuffers[EInputBufferKind::Normal].Buffer.Create(mContext, bufCi);
-            mInputBuffers[EInputBufferKind::Normal].Setup(mContext);
-        }
-
-        if(!!mMotionInput)
-        {
-            bufCi.Name = "OptiX Denoise Motion Input";
-            mInputBuffers[EInputBufferKind::Motion].Buffer.Create(mContext, bufCi);
-            mInputBuffers[EInputBufferKind::Motion].Setup(mContext);
-        }
-
-        // Output image/buffer
-
-        bufCi.Name = "OptiX Denoise Output";
-        mOutputBuffer.Buffer.Create(mContext, bufCi);
-        mOutputBuffer.Setup(mContext);
-
-        // Computing the amount of memory needed to do the denoiser
-        AssertOptiXResult(optixDenoiserComputeMemoryResources(mOptixDenoiser, extent.width, extent.height, &mDenoiserSizes));
-
-        AssertCudaResult(cudaMalloc((void**)&mCudaStateBuffer, mDenoiserSizes.stateSizeInBytes));
-        AssertCudaResult(cudaMalloc((void**)&mCudaScratchBuffer, mDenoiserSizes.withoutOverlapScratchSizeInBytes));
-        AssertCudaResult(cudaMalloc((void**)&mCudaMinRGB, 4 * sizeof(float)));
-        AssertCudaResult(cudaMalloc((void**)&mCudaIntensity, 1 * sizeof(float)));
-
-        AssertOptiXResult(optixDenoiserSetup(mOptixDenoiser, mCudaStream, extent.width, extent.height, mCudaStateBuffer, mDenoiserSizes.stateSizeInBytes, mCudaScratchBuffer,
-                                             mDenoiserSizes.withoutOverlapScratchSizeInBytes));
-    }
     void OptiXDenoiserStage::DestroyResolutionDependentComponents()
     {
         for(CudaBuffer& buffer : mInputBuffers)
@@ -372,76 +388,5 @@ namespace foray::optix {
         }
     }
 
-    void OptiXDenoiserStage::CudaBuffer::Setup(core::Context* context)
-    {
-#ifdef WIN32
-        VkMemoryGetWin32HandleInfoKHR memInfo{
-            .sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR,
-            .memory     = Buffer.GetAllocationInfo().deviceMemory,
-            .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
-        };
-
-        VkDevice device = context->Device;
-
-        PFN_vkGetMemoryWin32HandleKHR getHandleFunc = reinterpret_cast<PFN_vkGetMemoryWin32HandleKHR>(vkGetDeviceProcAddr(device, "vkGetMemoryWin32HandleKHR"));
-
-        if(!getHandleFunc)
-        {
-            Exception::Throw("Unable to resolve vkGetMemoryWin32HandleKHR device proc addr!");
-        }
-
-        getHandleFunc(device, &memInfo, &Handle);
-
-#else
-        VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
-                                     .memory     = Buffer.GetAllocationInfo().deviceMemory,
-                                     .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
-        context->VkbDispatchTable->getMemoryFdKHR(&memInfo, &Handle);
-#endif
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(context->Device(), Buffer.GetBuffer(), &requirements);
-
-        cudaExternalMemoryHandleDesc cudaExtMemHandleDesc{};
-        cudaExtMemHandleDesc.size = requirements.size;
-#ifdef WIN32
-        cudaExtMemHandleDesc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
-        cudaExtMemHandleDesc.handle.win32.handle = Handle;
-#else
-        cudaExtMemHandleDesc.type      = cudaExternalMemoryHandleTypeOpaqueFd;
-        cudaExtMemHandleDesc.handle.fd = Handle;
-#endif
-
-        cudaExternalMemory_t cudaExtMemVertexBuffer{};
-        AssertCudaResult(cudaImportExternalMemory(&cudaExtMemVertexBuffer, &cudaExtMemHandleDesc));
-
-#ifndef WIN32
-        // fd got consumed
-        cudaExtMemHandleDesc.handle.fd = -1;
-#endif
-
-        cudaExternalMemoryBufferDesc cudaExtBufferDesc{};
-        cudaExtBufferDesc.offset = 0;
-        cudaExtBufferDesc.size   = requirements.size;
-        cudaExtBufferDesc.flags  = 0;
-        AssertCudaResult(cudaExternalMemoryGetMappedBuffer(&CudaPtr, cudaExtMemVertexBuffer, &cudaExtBufferDesc));
-    }
-
-    void OptiXDenoiserStage::CudaBuffer::Destroy()
-    {
-        Buffer.Destroy();
-#ifdef WIN32
-        if(Handle != INVALID_HANDLE_VALUE)
-        {
-            CloseHandle(Handle);
-            Handle = INVALID_HANDLE_VALUE;
-        }
-#else
-        if(Handle != -1)
-        {
-            close(Handle);
-            Handle = -1;
-        }
-#endif
-    }
-
+#pragma endregion
 }  // namespace foray::optix

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "foray_cuda.hpp"
 #include <optix_types.h>
 #include <foray_exception.hpp>
 #include <cuda_runtime.h>

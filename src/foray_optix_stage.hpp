@@ -1,9 +1,6 @@
 #pragma once
+#include "foray_optix_cudabuffer.hpp"
 #include <array>
-#include <core/foray_managedbuffer.hpp>
-#include <cuda.h>
-#include <driver_types.h>
-#include <optix_types.h>
 #include <stages/foray_denoiserstage.hpp>
 
 // TODO: Motion Data is useless because OptiX requires a different Motion Vector format: https://raytracing-docs.nvidia.com/optix7/guide/index.html#ai_denoiser#temporal-denoising-modes
@@ -45,20 +42,6 @@ namespace foray::optix {
         OptixDenoiser      mOptixDenoiser{};
         OptixDenoiserSizes mDenoiserSizes{};
 
-        struct CudaBuffer
-        {
-            core::ManagedBuffer Buffer;
-#ifdef WIN32
-            HANDLE Handle = {INVALID_HANDLE_VALUE};
-#else
-            int Handle = -1;
-#endif
-            void* CudaPtr = nullptr;
-
-            void Setup(core::Context* context);
-            void Destroy();
-        };
-
         enum EInputBufferKind
         {
             Source,
@@ -68,11 +51,11 @@ namespace foray::optix {
         };
 
         std::array<CudaBuffer, 4> mInputBuffers;
-        CudaBuffer mOutputBuffer;
+        CudaBuffer                mOutputBuffer;
 
-        OptixPixelFormat mPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
+        OptixPixelFormat mPixelFormat       = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
         OptixPixelFormat mMotionPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF2;
-        size_t           mSizeOfPixel = 4 * sizeof(uint16_t);
+        size_t           mSizeOfPixel       = 4 * sizeof(uint16_t);
 
         stages::DenoiserSynchronisationSemaphore* mSemaphore     = nullptr;
         cudaExternalSemaphore_t                   mCudaSemaphore = nullptr;
