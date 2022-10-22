@@ -8,14 +8,20 @@
 // Note: this could easily be fixed with the help of a compute shader
 
 namespace foray::optix {
-    class OptiXDenoiserStage : public stages::DenoiserStage
+    class OptiXDenoiserStage : public stages::ExternalDenoiserStage
     {
       public:
         virtual void Init(core::Context* context, const stages::DenoiserConfig& config) override;
 
         virtual void BeforeDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
         virtual void AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
-        virtual void DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter);
+        virtual void DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter) override;
+
+        virtual void OnResized(const VkExtent2D& size) override;
+
+        virtual std::string GetUILabel() override;
+        virtual void        DisplayImguiConfiguration() override;
+        virtual void        IgnoreHistoryNextFrame() override;
 
       protected:
         virtual void CreateFixedSizeComponents() override;
@@ -57,8 +63,8 @@ namespace foray::optix {
         OptixPixelFormat mMotionPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF2;
         size_t           mSizeOfPixel       = 4 * sizeof(uint16_t);
 
-        stages::DenoiserSynchronisationSemaphore* mSemaphore     = nullptr;
-        cudaExternalSemaphore_t                   mCudaSemaphore = nullptr;
+        util::ExternalSemaphore* mSemaphore     = nullptr;
+        cudaExternalSemaphore_t  mCudaSemaphore = nullptr;
 
         uint32_t mDenoisedFrames = 0;
     };

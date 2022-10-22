@@ -389,4 +389,26 @@ namespace foray::optix {
     }
 
 #pragma endregion
+#pragma region Misc
+
+    std::string OptiXDenoiserStage::GetUILabel()
+    {
+        uint32_t major = OPTIX_VERSION / 10000;
+        uint32_t minor = (OPTIX_VERSION % 10000) / 100;
+        uint32_t micro = OPTIX_VERSION % 100;
+        return fmt::format("OptiX Denoiser v{}.{}.{}", major, minor, micro);
+    }
+    void OptiXDenoiserStage::DisplayImguiConfiguration() {}
+    void OptiXDenoiserStage::IgnoreHistoryNextFrame() 
+    {
+        mDenoisedFrames = 0;
+    }
+
+    void OptiXDenoiserStage::OnResized(const VkExtent2D& size)
+    {
+        IgnoreHistoryNextFrame();
+        RenderStage::OnResized(size);
+    }
+
+#pragma endregion
 }  // namespace foray::optix
