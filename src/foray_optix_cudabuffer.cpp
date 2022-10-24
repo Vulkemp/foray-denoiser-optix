@@ -8,19 +8,10 @@ namespace foray::optix {
         VkMemoryGetWin32HandleInfoKHR memInfo{
             .sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR,
             .memory     = Buffer.GetAllocationInfo().deviceMemory,
-            .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+            .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR,
         };
 
-        VkDevice device = context->Device;
-
-        PFN_vkGetMemoryWin32HandleKHR getHandleFunc = reinterpret_cast<PFN_vkGetMemoryWin32HandleKHR>(vkGetDeviceProcAddr(device, "vkGetMemoryWin32HandleKHR"));
-
-        if(!getHandleFunc)
-        {
-            Exception::Throw("Unable to resolve vkGetMemoryWin32HandleKHR device proc addr!");
-        }
-
-        getHandleFunc(device, &memInfo, &Handle);
+        AssertVkResult(context->VkbDispatchTable->getMemoryWin32HandleKHR(&memInfo, &Handle));
 
 #else
         VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
