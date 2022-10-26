@@ -15,7 +15,13 @@ namespace foray::optix {
 #endif
         void* CudaPtr = nullptr;
 
-        void Create(core::Context* context, VkDeviceSize size, std::string_view name);
+        VkExtent2D       Size;
+        VkDeviceSize     PixelSize;
+        OptixPixelFormat PixelFormat;
+
+        void Create(core::Context* context, VkExtent2D size, VkDeviceSize pixelSize, OptixPixelFormat pixelFormat, std::string_view name);
+
+        operator OptixImage2D();
 
         void SetupExportHandles(core::Context* context);
         void Destroy();

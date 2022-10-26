@@ -2,14 +2,19 @@
 #include "foray_optix_helpers.hpp"
 
 namespace foray::optix {
-    void CudaBuffer::Create(core::Context* context, VkDeviceSize size, std::string_view name)
+    void CudaBuffer::Create(core::Context* context, VkExtent2D size, VkDeviceSize pixelSize, OptixPixelFormat pixelFormat, std::string_view name)
     {
+        Size = size;
+        PixelSize = pixelSize;
+        PixelFormat = pixelFormat;
+
+        VkDeviceSize bufferSize = size.width * size.height * pixelSize;
+
         VkBufferUsageFlags usage{VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
                                  | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
 
-        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(
-            usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-            VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, name);
+        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, bufferSize, VmaMemoryUsage::VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                                           VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, name);
 
         VkExternalMemoryBufferCreateInfo extMemBufCi{.sType = VkStructureType::VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
 #ifdef WIN32
@@ -33,7 +38,7 @@ namespace foray::optix {
         };
 
         AssertVkResult(context->VkbDispatchTable->getMemoryWin32HandleKHR(&memInfo, &Handle));
-        Assert(Handle != 0 && Handle != INVALID_HANDLE_VALUE, "Thanks NVidia"); // getMemoryWin32HandleKHR returned VK_SUCCESS, but returned handle is invalid
+        Assert(Handle != 0 && Handle != INVALID_HANDLE_VALUE, "Thanks NVidia");  // getMemoryWin32HandleKHR returned VK_SUCCESS, but returned handle is invalid
 
 #else
         VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
@@ -65,6 +70,28 @@ namespace foray::optix {
         cudaExtBufferDesc.size   = Buffer.GetSize();
         cudaExtBufferDesc.flags  = 0;
         AssertCudaResult(cudaExternalMemoryGetMappedBuffer(&CudaPtr, cudaExtMemVertexBuffer, &cudaExtBufferDesc));
+    }
+
+    CudaBuffer::operator OptixImage2D()
+    {
+        return OptixImage2D
+        {
+            /// Pointer to the actual pixel data.
+            .data = reinterpret_cast<CUdeviceptr>(CudaPtr),
+            /// Width of the image (in pixels)
+            .width = Size.width,
+            /// Height of the image (in pixels)
+            .height = Size.height,
+            /// Stride between subsequent rows of the image (in bytes).
+            .rowStrideInBytes = Size.width * (uint32_t)PixelSize,
+            /// Stride between subsequent pixels of the image (in bytes).
+            /// If set to 0, dense packing (no gaps) is assumed.
+            /// For pixel format OPTIX_PIXEL_FORMAT_INTERNAL_GUIDE_LAYER it must be set to
+            /// at least OptixDenoiserSizes::internalGuideLayerSizeInBytes.
+            .pixelStrideInBytes = (uint32_t)PixelSize,
+            /// Pixel format.
+            .format = PixelFormat
+        };
     }
 
     void CudaBuffer::Destroy()

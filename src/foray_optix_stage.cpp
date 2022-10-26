@@ -98,32 +98,33 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::CreateResolutionDependentComponents()
     {
-        VkExtent3D extent = {mContext->GetSwapchainSize().width, mContext->GetSwapchainSize().height, 1};
+        VkExtent2D extent = mContext->GetSwapchainSize();
 
         VkDeviceSize pixelCount  = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height;
-        VkDeviceSize sizeOfPixel = 4 * sizeof(uint16_t);
+        VkDeviceSize sizeOfPixel = 4 * sizeof(float);
 
-        mInputBuffers[EInputBufferKind::Source].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Noisy Input");
+        mInputBuffers[EInputBufferKind::Source].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Noisy Input");
 
         if(!!mAlbedoInput)
         {
-            mInputBuffers[EInputBufferKind::Albedo].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Albedo Input");
+            mInputBuffers[EInputBufferKind::Albedo].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Albedo Input");
         }
 
         if(!!mNormalInput)
         {
-            mInputBuffers[EInputBufferKind::Normal].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Normal Input");
+            mInputBuffers[EInputBufferKind::Normal].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Normal Input");
         }
 
         if(!!mMotionInput)
         {
-            VkDeviceSize sizeOfPixel = 2 * sizeof(uint16_t);
-            mInputBuffers[EInputBufferKind::Motion].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Motion Input");
+            VkDeviceSize sizeOfPixel = 2 * sizeof(float);
+            mInputBuffers[EInputBufferKind::Motion].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT2, "OptiX Denoise Motion Input");
+            mScaleMotionStage.Init(mContext, mMotionInput, &(mInputBuffers[EInputBufferKind::Motion].Buffer));
         }
 
         // Output image/buffer
 
-        mOutputBuffer.Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Output");
+        mOutputBuffer.Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Output");
 
         // Computing the amount of memory needed to do the denoiser
         AssertOptiXResult(optixDenoiserComputeMemoryResources(mOptixDenoiser, extent.width, extent.height, &mDenoiserSizes));
@@ -161,10 +162,6 @@ namespace foray::optix {
             {
                 barriers.push_back(renderInfo.GetImageLayoutCache().Set(mNormalInput, barrier));
             }
-            if(!!mMotionInput)
-            {
-                barriers.push_back(renderInfo.GetImageLayoutCache().Set(mMotionInput, barrier));
-            }
 
             VkDependencyInfo depInfo{
                 .sType = VkStructureType::VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = (uint32_t)barriers.size(), .pImageMemoryBarriers = barriers.data()};
@@ -193,19 +190,12 @@ namespace foray::optix {
                 vkCmdCopyImageToBuffer(cmdBuffer, mNormalInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                        mInputBuffers[EInputBufferKind::Normal].Buffer.GetBuffer(), 1, &imgCopy);
             }
-            if(!!mMotionInput)
-            {
-                vkCmdCopyImageToBuffer(cmdBuffer, mMotionInput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                       mInputBuffers[EInputBufferKind::Motion].Buffer.GetBuffer(), 1, &imgCopy);
-            }
+        }
+        if(!!mMotionInput)
+        {
+            mScaleMotionStage.RecordFrame(cmdBuffer, renderInfo);
         }
     }
-
-    void lSetOptixImage2D(OptixImage2D& writeTo, const OptixImage2D& base, void* dataPtr)
-    {
-        writeTo      = base;
-        writeTo.data = (CUdeviceptr)dataPtr;
-    };
 
     void OptiXDenoiserStage::DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter)
     {
@@ -213,27 +203,11 @@ namespace foray::optix {
         {
             VkExtent2D size = mContext->GetSwapchainSize();
 
-            OptixPixelFormat pixelFormat      = mPixelFormat;
-            auto             sizeofPixel      = mSizeOfPixel;
-            uint32_t         rowStrideInBytes = sizeofPixel * size.width;
-
-            //std::vector<OptixImage2D> inputLayer;  // Order: RGB, Albedo, Normal
-
-            // Create and set our OptiX layers
-
-            OptixImage2D imageBase{
-                .width = size.width, .height = size.height, .rowStrideInBytes = rowStrideInBytes, .pixelStrideInBytes = (uint32_t)sizeofPixel, .format = pixelFormat};
-
-            OptixDenoiserLayer primaryLayer{};
-
-            lSetOptixImage2D(primaryLayer.input, imageBase, mInputBuffers[EInputBufferKind::Source].CudaPtr);
-            lSetOptixImage2D(primaryLayer.output, imageBase, mOutputBuffer.CudaPtr);
-
-            uint32_t historyIndex = (mDenoisedFrames == 0 ? 0 : ((mDenoisedFrames - 1) % 2));
+            OptixDenoiserLayer primaryLayer{.input = mInputBuffers[EInputBufferKind::Source], .output = mOutputBuffer};
 
             if(!!mMotionInput)
             {
-                lSetOptixImage2D(primaryLayer.previousOutput, imageBase, mOutputBuffer.CudaPtr);
+                primaryLayer.previousOutput = mOutputBuffer;
             }
 
             OptixImage2D flow{};
@@ -242,18 +216,15 @@ namespace foray::optix {
 
             if(!!mAlbedoInput)
             {
-                lSetOptixImage2D(guideLayer.albedo, imageBase, mInputBuffers[EInputBufferKind::Albedo].CudaPtr);
+                guideLayer.albedo = mInputBuffers[EInputBufferKind::Albedo];
             }
             if(!!mNormalInput)
             {
-                lSetOptixImage2D(guideLayer.normal, imageBase, mInputBuffers[EInputBufferKind::Normal].CudaPtr);
+                guideLayer.normal = mInputBuffers[EInputBufferKind::Normal];
             }
             if(!!mMotionInput)
             {
-                lSetOptixImage2D(guideLayer.flow, imageBase, mInputBuffers[EInputBufferKind::Motion].CudaPtr);
-                guideLayer.flow.format = mMotionPixelFormat;
-                guideLayer.flow.pixelStrideInBytes = 2 * sizeof(uint16_t);
-                guideLayer.flow.rowStrideInBytes = 2 * sizeof(uint16_t) * size.width;
+                guideLayer.flow = mInputBuffers[EInputBufferKind::Motion];
             }
 
             // Wait from Vulkan (Copy to Buffer)
@@ -352,6 +323,7 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::DestroyResolutionDependentComponents()
     {
+        mScaleMotionStage.Destroy();
         for(CudaBuffer& buffer : mInputBuffers)
         {
             buffer.Destroy();

@@ -2,6 +2,7 @@
 #include "foray_optix_cudabuffer.hpp"
 #include <array>
 #include <stages/foray_denoiserstage.hpp>
+#include "foray_optix_scalemotionstage.hpp"
 
 // TODO: Motion Data is useless because OptiX requires a different Motion Vector format: https://raytracing-docs.nvidia.com/optix7/guide/index.html#ai_denoiser#temporal-denoising-modes
 // Ours uses normalized texture coordinates [0...1], theirs uses texel coordinates [0...width] / [0...height]
@@ -59,13 +60,11 @@ namespace foray::optix {
         std::array<CudaBuffer, 4> mInputBuffers;
         CudaBuffer                mOutputBuffer;
 
-        OptixPixelFormat mPixelFormat       = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4;
-        OptixPixelFormat mMotionPixelFormat = OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF2;
-        size_t           mSizeOfPixel       = 4 * sizeof(uint16_t);
-
         util::ExternalSemaphore* mSemaphore     = nullptr;
         cudaExternalSemaphore_t  mCudaSemaphore = nullptr;
 
         uint32_t mDenoisedFrames = 0;
+
+        ScaleMotionStage mScaleMotionStage;
     };
 }  // namespace foray::optix
