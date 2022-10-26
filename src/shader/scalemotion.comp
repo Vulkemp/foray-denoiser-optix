@@ -1,0 +1,26 @@
+#version 430
+#extension GL_KHR_vulkan_glsl : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(rg32f, binding = 0) uniform image2D Input;
+layout(std430, binding = 1) writeonly buffer BUFFER_T { float Output[]; };
+
+layout(push_constant) uniform SCREENSIZE_T{uint Width; uint Height;} ScreenSize;
+
+void main()
+{
+    if (gl_GlobalInvocationID.x >= ScreenSize.Width || gl_GlobalInvocationID.y >= ScreenSize.Height)
+    {
+        return;
+    }
+
+    uint writeStartIndex = (gl_GlobalInvocationID.y * ScreenSize.Width + gl_GlobalInvocationID.x) * 2;
+
+    vec2 data = imageLoad(Input, ivec2(gl_GlobalInvocationID.xy)).xy;
+
+    data *= vec2(ScreenSize.Width, ScreenSize.Height) * -1; // Our Motion Vectors project current to previous, OptiX inverts this behaviour
+
+    Output[writeStartIndex + 0] = float(data.x);
+    Output[writeStartIndex + 1] = float(data.y);
+}

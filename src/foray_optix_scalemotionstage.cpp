@@ -2,6 +2,11 @@
 #include <core/foray_managedbuffer.hpp>
 #include <core/foray_managedimage.hpp>
 
+
+const uint32_t SCALEMOTION_SPIRV[] =
+#include "scalemotion.spv.h"
+    ;
+
 namespace foray::optix {
     void ScaleMotionStage::Init(core::Context* context, core::ManagedImage* input, core::ManagedBuffer* output)
     {
@@ -11,7 +16,9 @@ namespace foray::optix {
     }
     void ScaleMotionStage::ApiInitShader()
     {
-        mShader.LoadFromSource(mContext, "shaders/compute/scalemotion.comp");
+        std::vector<char> binary(sizeof(SCALEMOTION_SPIRV));
+        memcpy(binary.data(), SCALEMOTION_SPIRV, sizeof(SCALEMOTION_SPIRV));
+        mShader.LoadFromBinary(mContext, binary);
     }
     void ScaleMotionStage::ApiCreateDescriptorSetLayout()
     {
@@ -47,7 +54,7 @@ namespace foray::optix {
                                                       .DstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                                       .DstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                                       .NewLayout     = VK_IMAGE_LAYOUT_GENERAL};
-        VkImageMemoryBarrier2 vkImageBarrier = renderInfo.GetImageLayoutCache().Set(mInput, imageBarrier);
+        VkImageMemoryBarrier2            vkImageBarrier = renderInfo.GetImageLayoutCache().Set(mInput, imageBarrier);
 
         VkBufferMemoryBarrier2 bufferBarrier{.sType         = VkStructureType::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
                                              .srcStageMask  = VK_PIPELINE_STAGE_2_NONE,
@@ -58,13 +65,12 @@ namespace foray::optix {
                                              .offset        = 0,
                                              .size          = VK_WHOLE_SIZE};
 
-        VkDependencyInfo depInfo
-        {
-            .sType = VkStructureType::VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        VkDependencyInfo depInfo{
+            .sType                    = VkStructureType::VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
             .bufferMemoryBarrierCount = 1U,
-            .pBufferMemoryBarriers = &bufferBarrier,
-            .imageMemoryBarrierCount = 1U,
-            .pImageMemoryBarriers = &vkImageBarrier,
+            .pBufferMemoryBarriers    = &bufferBarrier,
+            .imageMemoryBarrierCount  = 1U,
+            .pImageMemoryBarriers     = &vkImageBarrier,
         };
 
         mContext->VkbDispatchTable->cmdPipelineBarrier2(cmdBuffer, &depInfo);

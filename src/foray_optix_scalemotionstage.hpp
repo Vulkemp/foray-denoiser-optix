@@ -2,6 +2,7 @@
 #include <stages/foray_computestage.hpp>
 
 namespace foray::optix {
+
     class ScaleMotionStage : public stages::ComputeStage
     {
       public:
