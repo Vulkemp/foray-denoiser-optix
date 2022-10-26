@@ -15,6 +15,8 @@ namespace foray::optix {
 #endif
         void* CudaPtr = nullptr;
 
+        void Create(core::Context* context, VkDeviceSize size, std::string_view name);
+
         void SetupExportHandles(core::Context* context);
         void Destroy();
     };

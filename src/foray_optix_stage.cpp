@@ -100,52 +100,30 @@ namespace foray::optix {
     {
         VkExtent3D extent = {mContext->GetSwapchainSize().width, mContext->GetSwapchainSize().height, 1};
 
-        VkDeviceSize size = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height * mSizeOfPixel;
+        VkDeviceSize pixelCount  = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height;
+        VkDeviceSize sizeOfPixel = 4 * sizeof(uint16_t);
 
-        // Using direct method
-        VkBufferUsageFlags usage{VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                 | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
-
-        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, size, VmaMemoryUsage::VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-                                                           VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, "OptiX Denoise Noisy Input");
-
-        VkExternalMemoryBufferCreateInfo extMemBufCi{.sType = VkStructureType::VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
-        #ifdef WIN32
-        extMemBufCi.handleTypes = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-        #else
-        extMemBufCi.handleTypes = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
-        #endif
-        bufCi.BufferCreateInfo.pNext = &extMemBufCi;
-
-        mInputBuffers[EInputBufferKind::Source].Buffer.Create(mContext, bufCi);
-        mInputBuffers[EInputBufferKind::Source].SetupExportHandles(mContext);
+        mInputBuffers[EInputBufferKind::Source].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Noisy Input");
 
         if(!!mAlbedoInput)
         {
-            bufCi.Name = "OptiX Denoise Albedo Input";
-            mInputBuffers[EInputBufferKind::Albedo].Buffer.Create(mContext, bufCi);
-            mInputBuffers[EInputBufferKind::Albedo].SetupExportHandles(mContext);
+            mInputBuffers[EInputBufferKind::Albedo].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Albedo Input");
         }
 
         if(!!mNormalInput)
         {
-            bufCi.Name = "OptiX Denoise Normal Input";
-            mInputBuffers[EInputBufferKind::Normal].Buffer.Create(mContext, bufCi);
-            mInputBuffers[EInputBufferKind::Normal].SetupExportHandles(mContext);
+            mInputBuffers[EInputBufferKind::Normal].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Normal Input");
         }
 
         if(!!mMotionInput)
         {
-            bufCi.Name = "OptiX Denoise Motion Input";
-            mInputBuffers[EInputBufferKind::Motion].Buffer.Create(mContext, bufCi);
-            mInputBuffers[EInputBufferKind::Motion].SetupExportHandles(mContext);
+            VkDeviceSize sizeOfPixel = 2 * sizeof(uint16_t);
+            mInputBuffers[EInputBufferKind::Motion].Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Motion Input");
         }
 
         // Output image/buffer
 
-        bufCi.Name = "OptiX Denoise Output";
-        mOutputBuffer.Buffer.Create(mContext, bufCi);
-        mOutputBuffer.SetupExportHandles(mContext);
+        mOutputBuffer.Create(mContext, pixelCount * sizeOfPixel, "OptiX Denoise Output");
 
         // Computing the amount of memory needed to do the denoiser
         AssertOptiXResult(optixDenoiserComputeMemoryResources(mOptixDenoiser, extent.width, extent.height, &mDenoiserSizes));
@@ -407,7 +385,7 @@ namespace foray::optix {
         return fmt::format("OptiX Denoiser v{}.{}.{}", major, minor, micro);
     }
     void OptiXDenoiserStage::DisplayImguiConfiguration() {}
-    void OptiXDenoiserStage::IgnoreHistoryNextFrame() 
+    void OptiXDenoiserStage::IgnoreHistoryNextFrame()
     {
         mDenoisedFrames = 0;
     }
