@@ -252,6 +252,8 @@ namespace foray::optix {
             {
                 lSetOptixImage2D(guideLayer.flow, imageBase, mInputBuffers[EInputBufferKind::Motion].CudaPtr);
                 guideLayer.flow.format = mMotionPixelFormat;
+                guideLayer.flow.pixelStrideInBytes = 2 * sizeof(uint16_t);
+                guideLayer.flow.rowStrideInBytes = 2 * sizeof(uint16_t) * size.width;
             }
 
             // Wait from Vulkan (Copy to Buffer)
