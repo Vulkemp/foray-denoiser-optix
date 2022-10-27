@@ -33,7 +33,7 @@ namespace foray::optix {
     void ScaleMotionStage::ApiCreatePipelineLayout()
     {
         mPipelineLayout.AddDescriptorSetLayout(mDescriptorSet.GetDescriptorSetLayout());
-        mPipelineLayout.AddPushConstantRange<VkExtent2D>();
+        mPipelineLayout.AddPushConstantRange<VkExtent2D>(VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT);
         mPipelineLayout.Build(mContext);
     }
     void ScaleMotionStage::ApiBeforeFrame(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
