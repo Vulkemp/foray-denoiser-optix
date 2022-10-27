@@ -16,9 +16,7 @@ namespace foray::optix {
     }
     void ScaleMotionStage::ApiInitShader()
     {
-        std::vector<char> binary(sizeof(SCALEMOTION_SPIRV));
-        memcpy(binary.data(), SCALEMOTION_SPIRV, sizeof(SCALEMOTION_SPIRV));
-        mShader.LoadFromBinary(mContext, binary);
+        mShader.LoadFromBinary(mContext, SCALEMOTION_SPIRV, sizeof(SCALEMOTION_SPIRV));
     }
     void ScaleMotionStage::ApiCreateDescriptorSetLayout()
     {
