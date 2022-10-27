@@ -4,7 +4,7 @@
 
 
 const uint32_t SCALEMOTION_SPIRV[] =
-#include "scalemotion.spv.h"
+#include "foray_optix_scalemotion.comp.spv.h"
     ;
 
 namespace foray::optix {

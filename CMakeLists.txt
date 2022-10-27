@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.20)
 
 project("foray-denoiser-optix")
 
@@ -7,6 +7,7 @@ enable_language(CUDA)
 set(CMAKE_CUDA_STANDARD 20)
 
 include("cmakescripts/findoptixsdk.cmake")
+include("cmakescripts/compileshader.cmake")
 
 MESSAGE("--- << CMAKE of ${PROJECT_NAME} >> --- ")
 MESSAGE(STATUS "CURRENT SOURCE DIR \"${CMAKE_CURRENT_SOURCE_DIR}\"")#
@@ -48,6 +49,8 @@ else ()
 )
 
 endif()
+
+foray_compileshader("${CMAKE_CURRENT_SOURCE_DIR}/src/shader/scalemotion.comp" "${CMAKE_CURRENT_SOURCE_DIR}/src/foray_optix_scalemotion.comp.spv.h")
 
 target_include_directories(
 	${PROJECT_NAME}

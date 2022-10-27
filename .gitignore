@@ -14,3 +14,5 @@ glTF-Sample-Models/*
 glTF-Sample-Models
 
 .vscode/settings.json
+
+*.spv.h
