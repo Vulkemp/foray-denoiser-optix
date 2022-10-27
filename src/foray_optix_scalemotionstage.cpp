@@ -20,30 +20,21 @@ namespace foray::optix {
     }
     void ScaleMotionStage::ApiCreateDescriptorSetLayout()
     {
-        {  // Update Info Vectors
-            mInputImageInfo   = {VkDescriptorImageInfo{.sampler = nullptr, .imageView = mInput->GetImageView(), .imageLayout = VkImageLayout::VK_IMAGE_LAYOUT_GENERAL}};
-            mOutputBufferInfo = {mOutput->GetVkDescriptorBufferInfo()};
-        }
-
         {  // Input Descriptor Info
-            std::shared_ptr<core::DescriptorSetHelper::DescriptorInfo> inputDescriptorInfo = std::make_shared<core::DescriptorSetHelper::DescriptorInfo>();
-            inputDescriptorInfo->Init(VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT, &mInputImageInfo);
-            mDescriptorSet.SetDescriptorInfoAt(0, inputDescriptorInfo);
+            mDescriptorSet.SetDescriptorAt(0, mInput, VkImageLayout::VK_IMAGE_LAYOUT_GENERAL, nullptr, VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT);
         }
 
         {  // Output Descriptor Info
-            std::shared_ptr<core::DescriptorSetHelper::DescriptorInfo> outputDescriptorInfo = std::make_shared<core::DescriptorSetHelper::DescriptorInfo>();
-            outputDescriptorInfo->Init(VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT, &mOutputBufferInfo);
-            mDescriptorSet.SetDescriptorInfoAt(1, outputDescriptorInfo);
+            mDescriptorSet.SetDescriptorAt(1, mOutput, VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT);
         }
 
-        mDescriptorSet.Create(mContext, -1, "ScaleMotionStage Descriptor Set");
+        mDescriptorSet.Create(mContext, "OptiX ScaleMotionStage Descriptor Set");
     }
     void ScaleMotionStage::ApiCreatePipelineLayout()
     {
         mPipelineLayout.AddDescriptorSetLayout(mDescriptorSet.GetDescriptorSetLayout());
         mPipelineLayout.AddPushConstantRange<VkExtent2D>();
-        mPipelineLayout.Create(mContext);
+        mPipelineLayout.Build(mContext);
     }
     void ScaleMotionStage::ApiBeforeFrame(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {

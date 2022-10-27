@@ -18,8 +18,5 @@ namespace foray::optix {
 
         core::ManagedImage*  mInput  = nullptr;
         core::ManagedBuffer* mOutput = nullptr;
-
-        std::vector<VkDescriptorBufferInfo> mOutputBufferInfo;
-        std::vector<VkDescriptorImageInfo> mInputImageInfo;
     };
 }  // namespace foray::optix
