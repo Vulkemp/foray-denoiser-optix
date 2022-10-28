@@ -76,12 +76,6 @@ namespace foray::optix {
         OptixDenoiserModelKind modelKind = (!!mMotionInput) ? OPTIX_DENOISER_MODEL_KIND_TEMPORAL : OPTIX_DENOISER_MODEL_KIND_HDR;
         AssertOptiXResult(optixDenoiserCreate(mOptixDevice, modelKind, &mDenoiserOptions, &mOptixDenoiser));
 
-#ifdef WIN32
-        auto handleType = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-#else
-        auto handleType                       = VkExternalSemaphoreHandleTypeFlagBits::VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
-#endif
-
         cudaExternalSemaphoreHandleDesc externalSemaphoreHandleDesc;
         std::memset(&externalSemaphoreHandleDesc, 0, sizeof(externalSemaphoreHandleDesc));
         externalSemaphoreHandleDesc.flags = 0;
@@ -100,7 +94,6 @@ namespace foray::optix {
     {
         VkExtent2D extent = mContext->GetSwapchainSize();
 
-        VkDeviceSize pixelCount  = (VkDeviceSize)extent.width * (VkDeviceSize)extent.height;
         VkDeviceSize sizeOfPixel = 4 * sizeof(float);
 
         mInputBuffers[EInputBufferKind::Source].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Noisy Input");
@@ -207,10 +200,9 @@ namespace foray::optix {
 
             if(!!mMotionInput)
             {
+                // This is ok, because OptiX consumes previous output before writing the next
                 primaryLayer.previousOutput = mOutputBuffer;
             }
-
-            OptixImage2D flow{};
 
             OptixDenoiserGuideLayer guideLayer{};
 
@@ -235,6 +227,7 @@ namespace foray::optix {
 
             if(!!mCudaIntensity)
             {
+                // Calculate intensity to improve performance in very bright or very dark scenes
                 AssertOptiXResult(optixDenoiserComputeIntensity(mOptixDenoiser, mCudaStream, &primaryLayer.input, mCudaIntensity, mCudaScratchBuffer,
                                                                 mDenoiserSizes.withoutOverlapScratchSizeInBytes));
             }
@@ -261,6 +254,7 @@ namespace foray::optix {
         {
             logger();
         }
+        mDenoisedFrames++;
     }
 
     void OptiXDenoiserStage::AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)

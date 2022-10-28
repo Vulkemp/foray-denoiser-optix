@@ -3,7 +3,9 @@
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
+/// Motion vector input image
 layout(rg32f, binding = 0) uniform image2D Input;
+/// Cuda transfer buffer (output)
 layout(std430, binding = 1) writeonly buffer BUFFER_T { float Output[]; };
 
 layout(push_constant) uniform SCREENSIZE_T{uint Width; uint Height;} ScreenSize;
@@ -17,6 +19,7 @@ void main()
 
     uint writeStartIndex = (gl_GlobalInvocationID.y * ScreenSize.Width + gl_GlobalInvocationID.x) * 2;
 
+    // Get data from motion vector image (projects current -> previous in UV coordinate space [0..1])
     vec2 data = imageLoad(Input, ivec2(gl_GlobalInvocationID.xy)).xy;
 
     data *= vec2(ScreenSize.Width, ScreenSize.Height) * -1; // Our Motion Vectors project current to previous, OptiX inverts this behaviour
