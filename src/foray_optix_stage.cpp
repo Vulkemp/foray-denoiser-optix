@@ -1,5 +1,6 @@
 #include "foray_optix_stage.hpp"
 #include "foray_optix_helpers.hpp"
+#include <bench/foray_devicebenchmark.hpp>
 #include <core/foray_context.hpp>
 #include <cuda_runtime.h>
 #include <foray_logger.hpp>
@@ -49,6 +50,7 @@ namespace foray::optix {
         mMotionInput   = config.GBufferOutputs[(size_t)stages::GBufferStage::EOutput::Motion];
         mPrimaryOutput = config.PrimaryOutput;
         mSemaphore     = config.Semaphore;
+        mBenchmark     = config.Benchmark;
 
         Assert(!!mPrimaryInput, "Primary Input must be set");
         Assert(!!mPrimaryOutput, "Primary Output must be set");
@@ -60,6 +62,12 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::CreateFixedSizeComponents()
     {
+        if(!!mBenchmark)
+        {
+            std::vector<const char*> queryNames({bench::BenchmarkTimestamp::BEGIN, TIMESTAMP_COPYTOBUFFERS, TIMESTAMP_SCALEMOTION, TIMESTAMP_CUDA, bench::BenchmarkTimestamp::END});
+            mBenchmark->Create(mContext, queryNames);
+        }
+
         AssertCudaResult(cuInit(0));  // Initialize CUDA driver API.
 
         CUdevice device = 0;
@@ -136,6 +144,12 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::BeforeDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {
+        uint32_t frameIdx = renderInfo.GetFrameNumber();
+        if(!!mBenchmark)
+        {
+            mBenchmark->CmdResetQuery(cmdBuffer, frameIdx);
+            mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, bench::BenchmarkTimestamp::BEGIN, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT);
+        }
         {  // STEP #1    Memory barriers before transfer
             core::ImageLayoutCache::Barrier2 barrier{.SrcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                                      .SrcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
@@ -186,7 +200,20 @@ namespace foray::optix {
         }
         if(!!mMotionInput)
         {
+            if(!!mBenchmark)
+            {
+                mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, TIMESTAMP_COPYTOBUFFERS, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+            }
             mScaleMotionStage.RecordFrame(cmdBuffer, renderInfo);
+            if(!!mBenchmark)
+            {
+                mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, TIMESTAMP_SCALEMOTION, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+            }
+        }
+        else if(!!mBenchmark)
+        {
+            mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, TIMESTAMP_COPYTOBUFFERS, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+            mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, TIMESTAMP_SCALEMOTION, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
         }
     }
 
@@ -259,6 +286,11 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo)
     {
+        uint32_t frameIdx = renderInfo.GetFrameNumber();
+        if(!!mBenchmark)
+        {
+            mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, TIMESTAMP_CUDA, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+        }
         {  // STEP #1    Memory barriers before transfer
             core::ImageLayoutCache::Barrier2 barrier{.SrcStageMask  = VK_PIPELINE_STAGE_2_NONE,
                                                      .SrcAccessMask = VK_ACCESS_2_NONE,
@@ -279,6 +311,10 @@ namespace foray::optix {
             };
 
             vkCmdCopyBufferToImage(cmdBuffer, mOutputBuffer.Buffer.GetBuffer(), mPrimaryOutput->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopy);
+        }
+        if(!!mBenchmark)
+        {
+            mBenchmark->CmdWriteTimestamp(cmdBuffer, frameIdx, bench::BenchmarkTimestamp::END, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         }
     }
 
@@ -318,6 +354,11 @@ namespace foray::optix {
         {
             cuCtxDestroy(mCudaContext);
             mCudaContext = nullptr;
+        }
+        if(!!mBenchmark)
+        {
+            mBenchmark->Destroy();
+            mBenchmark = nullptr;
         }
     }
 
@@ -370,6 +411,10 @@ namespace foray::optix {
 
     void OptiXDenoiserStage::Resize(const VkExtent2D& size)
     {
+        if (!mOptixDenoiser)
+        {
+            return;
+        }
         IgnoreHistoryNextFrame();
         DestroyResolutionDependentComponents();
         CreateResolutionDependentComponents();

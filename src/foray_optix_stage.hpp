@@ -1,8 +1,8 @@
 #pragma once
 #include "foray_optix_cudabuffer.hpp"
+#include "foray_optix_scalemotionstage.hpp"
 #include <array>
 #include <stages/foray_denoiserstage.hpp>
-#include "foray_optix_scalemotionstage.hpp"
 
 namespace foray::optix {
 
@@ -46,9 +46,9 @@ namespace foray::optix {
         // Cuda Variables
 
         /// @brief Cuda Context
-        CUcontext   mCudaContext{};
+        CUcontext mCudaContext{};
         /// @brief Cuda Stream
-        CUstream    mCudaStream{};
+        CUstream mCudaStream{};
         /// @brief OptiX internal state buffer
         CUdeviceptr mCudaStateBuffer{};
         /// @brief OptiX internal scratch buffer
@@ -76,7 +76,7 @@ namespace foray::optix {
         /// @brief Input data transfer buffers (Vulkan -> Cuda)
         std::array<CudaBuffer, 4> mInputBuffers;
         /// @brief Output data transfer buffer (Cuda -> Vulkan)
-        CudaBuffer                mOutputBuffer;
+        CudaBuffer mOutputBuffer;
 
         /// @brief Timeline semaphore for synchronizing Vulkan & Cuda
         util::ExternalSemaphore* mSemaphore     = nullptr;
@@ -87,5 +87,11 @@ namespace foray::optix {
 
         /// @brief Compute stage for scaling motion vectors into the correct values expected by OptiX
         ScaleMotionStage mScaleMotionStage;
+
+        inline static const char* TIMESTAMP_COPYTOBUFFERS = "Copy To Buffers";
+        inline static const char* TIMESTAMP_SCALEMOTION   = "Rescale Motion Vectors";
+        inline static const char* TIMESTAMP_CUDA          = "Cuda";
+
+        bench::DeviceBenchmark* mBenchmark = nullptr;
     };
 }  // namespace foray::optix
