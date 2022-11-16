@@ -13,7 +13,7 @@ namespace foray::optix {
         VkBufferUsageFlags usage{VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
                                  | VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
 
-        core::ManagedBuffer::ManagedBufferCreateInfo bufCi(usage, bufferSize, VmaMemoryUsage::VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        core::ManagedBuffer::CreateInfo bufCi(usage, bufferSize, VmaMemoryUsage::VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
                                                            VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, name);
 
         VkExternalMemoryBufferCreateInfo extMemBufCi{.sType = VkStructureType::VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};

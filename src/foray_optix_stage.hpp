@@ -17,17 +17,19 @@ namespace foray::optix {
         virtual void AfterDenoise(VkCommandBuffer cmdBuffer, base::FrameRenderInfo& renderInfo) override;
         virtual void DispatchDenoise(uint64_t timelineValueBefore, uint64_t timelineValueAfter) override;
 
-        virtual void OnResized(const VkExtent2D& size) override;
+        virtual void Resize(const VkExtent2D& size) override;
 
         virtual std::string GetUILabel() override;
         virtual void        DisplayImguiConfiguration() override;
         virtual void        IgnoreHistoryNextFrame() override;
 
+        virtual void Destroy() override;
+
       protected:
-        virtual void CreateFixedSizeComponents() override;
-        virtual void DestroyFixedComponents() override;
-        virtual void CreateResolutionDependentComponents() override;
-        virtual void DestroyResolutionDependentComponents() override;
+        virtual void CreateFixedSizeComponents();
+        virtual void DestroyFixedComponents();
+        virtual void CreateResolutionDependentComponents();
+        virtual void DestroyResolutionDependentComponents();
 
         // References to Input/Output ManagedImages
 

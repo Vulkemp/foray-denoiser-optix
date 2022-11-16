@@ -44,9 +44,9 @@ namespace foray::optix {
         Destroy();
         mContext       = context;
         mPrimaryInput  = config.PrimaryInput;
-        mAlbedoInput   = config.AlbedoInput;
-        mNormalInput   = config.NormalInput;
-        mMotionInput   = config.MotionInput;
+        mAlbedoInput   = config.GBufferOutputs[(size_t)stages::GBufferStage::EOutput::Albedo];
+        mNormalInput   = config.GBufferOutputs[(size_t)stages::GBufferStage::EOutput::Normal];
+        mMotionInput   = config.GBufferOutputs[(size_t)stages::GBufferStage::EOutput::Motion];
         mPrimaryOutput = config.PrimaryOutput;
         mSemaphore     = config.Semaphore;
 
@@ -94,18 +94,18 @@ namespace foray::optix {
     {
         VkExtent2D extent = mContext->GetSwapchainSize();
 
-        VkDeviceSize sizeOfPixel = 4 * sizeof(float);
+        VkDeviceSize sizeOfPixel = 4 * sizeof(uint16_t);
 
-        mInputBuffers[EInputBufferKind::Source].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Noisy Input");
+        mInputBuffers[EInputBufferKind::Source].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4, "OptiX Denoise Noisy Input");
 
         if(!!mAlbedoInput)
         {
-            mInputBuffers[EInputBufferKind::Albedo].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Albedo Input");
+            mInputBuffers[EInputBufferKind::Albedo].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4, "OptiX Denoise Albedo Input");
         }
 
         if(!!mNormalInput)
         {
-            mInputBuffers[EInputBufferKind::Normal].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Normal Input");
+            mInputBuffers[EInputBufferKind::Normal].Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4, "OptiX Denoise Normal Input");
         }
 
         if(!!mMotionInput)
@@ -117,7 +117,7 @@ namespace foray::optix {
 
         // Output image/buffer
 
-        mOutputBuffer.Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_FLOAT4, "OptiX Denoise Output");
+        mOutputBuffer.Create(mContext, extent, sizeOfPixel, OptixPixelFormat::OPTIX_PIXEL_FORMAT_HALF4, "OptiX Denoise Output");
 
         // Computing the amount of memory needed to do the denoiser
         AssertOptiXResult(optixDenoiserComputeMemoryResources(mOptixDenoiser, extent.width, extent.height, &mDenoiserSizes));
@@ -146,14 +146,14 @@ namespace foray::optix {
             std::vector<VkImageMemoryBarrier2> barriers;
             barriers.reserve(3);
 
-            barriers.push_back(renderInfo.GetImageLayoutCache().Set(mPrimaryInput, barrier));
+            barriers.push_back(renderInfo.GetImageLayoutCache().MakeBarrier(mPrimaryInput, barrier));
             if(!!mAlbedoInput)
             {
-                barriers.push_back(renderInfo.GetImageLayoutCache().Set(mAlbedoInput, barrier));
+                barriers.push_back(renderInfo.GetImageLayoutCache().MakeBarrier(mAlbedoInput, barrier));
             }
             if(!!mNormalInput)
             {
-                barriers.push_back(renderInfo.GetImageLayoutCache().Set(mNormalInput, barrier));
+                barriers.push_back(renderInfo.GetImageLayoutCache().MakeBarrier(mNormalInput, barrier));
             }
 
             VkDependencyInfo depInfo{
@@ -285,6 +285,12 @@ namespace foray::optix {
 #pragma endregion
 #pragma region Destroy
 
+    void OptiXDenoiserStage::Destroy()
+    {
+        DestroyResolutionDependentComponents();
+        DestroyFixedComponents();
+    }
+
     void OptiXDenoiserStage::DestroyFixedComponents()
     {
         if(!!mCudaSemaphore)
@@ -327,18 +333,22 @@ namespace foray::optix {
         if(!!mCudaStateBuffer)
         {
             AssertCudaResult(cudaFree(reinterpret_cast<void*>(mCudaStateBuffer)));
+            mCudaStateBuffer = 0;
         }
         if(!!mCudaScratchBuffer)
         {
             AssertCudaResult(cudaFree(reinterpret_cast<void*>(mCudaScratchBuffer)));
+            mCudaScratchBuffer = 0;
         }
         if(!!mCudaMinRGB)
         {
             AssertCudaResult(cudaFree(reinterpret_cast<void*>(mCudaMinRGB)));
+            mCudaMinRGB = 0;
         }
         if(!!mCudaIntensity)
         {
             AssertCudaResult(cudaFree(reinterpret_cast<void*>(mCudaIntensity)));
+            mCudaIntensity = 0;
         }
     }
 
@@ -358,10 +368,11 @@ namespace foray::optix {
         mDenoisedFrames = 0;
     }
 
-    void OptiXDenoiserStage::OnResized(const VkExtent2D& size)
+    void OptiXDenoiserStage::Resize(const VkExtent2D& size)
     {
         IgnoreHistoryNextFrame();
-        RenderStage::OnResized(size);
+        DestroyResolutionDependentComponents();
+        CreateResolutionDependentComponents();
     }
 
 #pragma endregion

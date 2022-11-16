@@ -54,8 +54,8 @@ foray_compileshader("${CMAKE_CURRENT_SOURCE_DIR}/src/shader/scalemotion.comp" "$
 
 target_include_directories(
 	${PROJECT_NAME}
-	PUBLIC "../foray/src"
-	PUBLIC "../foray/third_party"
+	PUBLIC "${CMAKE_SOURCE_DIR}/foray/src"
+	PUBLIC "${CMAKE_SOURCE_DIR}/foray/third_party"
 	PUBLIC $CACHE{OPTIXSDK_INCLUDE}
 	PUBLIC ${Vulkan_INCLUDE_DIRS}
 	PUBLIC ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}

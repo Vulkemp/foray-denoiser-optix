@@ -18,10 +18,11 @@ namespace foray::optix {
     {
         mShader.LoadFromBinary(mContext, SCALEMOTION_SPIRV, sizeof(SCALEMOTION_SPIRV));
     }
-    void ScaleMotionStage::ApiCreateDescriptorSetLayout()
+    void ScaleMotionStage::ApiCreateDescriptorSet()
     {
         {  // Input Descriptor Info
-            mDescriptorSet.SetDescriptorAt(0, mInput, VkImageLayout::VK_IMAGE_LAYOUT_GENERAL, nullptr, VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT);
+            mDescriptorSet.SetDescriptorAt(0, mInput, VkImageLayout::VK_IMAGE_LAYOUT_GENERAL, nullptr, VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                           VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT);
         }
 
         {  // Output Descriptor Info
@@ -43,7 +44,7 @@ namespace foray::optix {
                                                       .DstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                                       .DstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                                       .NewLayout     = VK_IMAGE_LAYOUT_GENERAL};
-        VkImageMemoryBarrier2            vkImageBarrier = renderInfo.GetImageLayoutCache().Set(mInput, imageBarrier);
+        VkImageMemoryBarrier2            vkImageBarrier = renderInfo.GetImageLayoutCache().MakeBarrier(mInput, imageBarrier);
 
         VkBufferMemoryBarrier2 bufferBarrier{.sType         = VkStructureType::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
                                              .srcStageMask  = VK_PIPELINE_STAGE_2_NONE,
