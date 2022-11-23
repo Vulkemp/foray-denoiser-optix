@@ -37,8 +37,10 @@ namespace foray::optix {
             .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR,
         };
 
-        AssertVkResult(context->VkbDispatchTable->getMemoryWin32HandleKHR(&memInfo, &Handle));
-        Assert(Handle != 0 && Handle != INVALID_HANDLE_VALUE, "Thanks NVidia");  // getMemoryWin32HandleKHR returned VK_SUCCESS, but returned handle is invalid
+        HANDLE handle;
+        AssertVkResult(context->VkbDispatchTable->getMemoryWin32HandleKHR(&memInfo, &handle));
+        Handle = handle;
+        Assert(Handle != 0 && Handle != INVALID_HANDLE_VALUE, "getMemoryWin32HandleKHR returned VK_SUCCESS, but returned handle is invalid");
 
 #else
         VkMemoryGetFdInfoKHR memInfo{.sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
