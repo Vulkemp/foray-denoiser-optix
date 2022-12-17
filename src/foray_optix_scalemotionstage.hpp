@@ -3,7 +3,7 @@
 
 namespace foray::optix {
 
-    class ScaleMotionStage : public stages::ComputeStage
+    class ScaleMotionStage : public stages::ComputeStageBase
     {
       public:
         void Init(core::Context* context, core::ManagedImage* input, core::ManagedBuffer* output);

@@ -12,7 +12,7 @@ namespace foray::optix {
     {
         mInput  = input;
         mOutput = output;
-        stages::ComputeStage::Init(context);
+        stages::ComputeStageBase::Init(context);
     }
     void ScaleMotionStage::ApiInitShader()
     {
