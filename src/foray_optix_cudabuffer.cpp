@@ -17,7 +17,7 @@ namespace foray::optix {
                                                            VmaAllocationCreateFlagBits::VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, name);
 
         VkExternalMemoryBufferCreateInfo extMemBufCi{.sType = VkStructureType::VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
-#ifdef WIN32
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
         extMemBufCi.handleTypes = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
 #else
         extMemBufCi.handleTypes = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
@@ -30,15 +30,17 @@ namespace foray::optix {
 
     void CudaBuffer::SetupExportHandles(core::Context* context)
     {
-#ifdef WIN32
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
         VkMemoryGetWin32HandleInfoKHR memInfo{
             .sType      = VkStructureType::VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR,
             .memory     = Buffer.GetAllocationInfo().deviceMemory,
             .handleType = VkExternalMemoryHandleTypeFlagBits::VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR,
         };
 
+        PFN_vkGetMemoryWin32HandleKHR getFunc = (PFN_vkGetMemoryWin32HandleKHR)vkGetDeviceProcAddr(context->Device(), "vkGetMemoryWin32HandleKHR");
+        Assert(!!getFunc);
         HANDLE handle;
-        AssertVkResult(context->VkbDispatchTable->getMemoryWin32HandleKHR(&memInfo, &handle));
+        AssertVkResult(getFunc(context->Device(), & memInfo, &handle));
         Handle = handle;
         Assert(Handle != 0 && Handle != INVALID_HANDLE_VALUE, "getMemoryWin32HandleKHR returned VK_SUCCESS, but returned handle is invalid");
 
@@ -51,7 +53,7 @@ namespace foray::optix {
 
         cudaExternalMemoryHandleDesc cudaExtMemHandleDesc{};
         cudaExtMemHandleDesc.size = Buffer.GetSize();
-#ifdef WIN32
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
         cudaExtMemHandleDesc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
         cudaExtMemHandleDesc.handle.win32.handle = Handle;
 #else
@@ -99,7 +101,7 @@ namespace foray::optix {
     void CudaBuffer::Destroy()
     {
         Buffer.Destroy();
-#ifdef WIN32
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
         if(Handle != INVALID_HANDLE_VALUE)
         {
             CloseHandle(Handle);

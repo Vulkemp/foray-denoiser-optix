@@ -87,7 +87,7 @@ namespace foray::optix {
         cudaExternalSemaphoreHandleDesc externalSemaphoreHandleDesc;
         std::memset(&externalSemaphoreHandleDesc, 0, sizeof(externalSemaphoreHandleDesc));
         externalSemaphoreHandleDesc.flags = 0;
-#ifdef WIN32
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
         externalSemaphoreHandleDesc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
         externalSemaphoreHandleDesc.handle.win32.handle = reinterpret_cast<void*>(mSemaphore->GetHandle());
 #else

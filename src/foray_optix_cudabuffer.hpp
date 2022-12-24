@@ -8,7 +8,7 @@ namespace foray::optix {
     struct CudaBuffer
     {
         core::ManagedBuffer Buffer;
-#ifdef WIN32
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
         HANDLE Handle = {INVALID_HANDLE_VALUE};
 #else
         int Handle = -1;
